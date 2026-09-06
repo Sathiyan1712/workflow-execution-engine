@@ -1,12 +1,13 @@
 # Workflow Execution Engine
 
-An asynchronous, parallel workflow execution engine that runs a directed acyclic graph (DAG) of steps (shell commands, REST API calls, or custom handlers) with dependency resolution, variable substitution/context passing, granular failure cascading, and non-blocking background processing.
+An asynchronous, parallel workflow execution engine that runs a directed acyclic graph (DAG) of steps (Shell commands, REST APIs, and AI Reasoning nodes) with dependency resolution, variable substitution/context passing, granular failure cascading, and non-blocking background processing.
 
 Built for the Nutanix Hackathon — Project Area 4: Workflow Execution Engine.
 
 ## Features
 - **JSON-defined DAGs**: Define workflows with step IDs, types, and `depends_on` dependencies.
 - **Asynchronous Parallel Execution**: Nodes whose dependencies have succeeded execute concurrently via standard Python `asyncio`.
+- **AI Reasoning Node (`type: "ai"`)**: Integrated with Gemini 2.5 Flash API for prompt evaluation, structured JSON extraction (`response_format: "json"`), and intelligent decision routing.
 - **Variable Substitution & Context Passing**: Pass outputs dynamically between steps using `${{ steps.STEP_ID.stdout }}` or nested JSON `${{ steps.STEP_ID.response.json_key }}`.
 - **Background Processing**: `POST /workflows` accepts the DAG payload immediately with `202 Accepted` and executes the pipeline in the background.
 - **Explicit Lifecycle States**: Granular status tracking (`PENDING`, `RUNNING`, `SUCCESS`, `FAILED`, `SKIPPED`) at both step and workflow levels.
@@ -16,9 +17,9 @@ Built for the Nutanix Hackathon — Project Area 4: Workflow Execution Engine.
 
 ## Architecture
 
-- `engine.py` — Core async execution engine: DAG validation, templating & context variable resolution, dynamic step scheduler, failure propagation, and step registry.
+- `engine.py` — Core async execution engine: DAG validation, templating & context variable resolution, dynamic step scheduler, failure propagation, and step registry (`shell`, `rest`, `ai`).
 - `main.py` — FastAPI service providing non-blocking background job submission and polling endpoints.
-- `test_engine.py` — Test suite covering linear, parallel branching, context passing/interpolation, error handling, and independent branches.
+- `test_engine.py` — Test suite covering linear, parallel branching, context passing/interpolation, AI node integration, and failure cascading.
 - `test_api.py` — End-to-end integration test verifying FastAPI background tasks and variable substitution over HTTP.
 
 ## Running it
@@ -32,33 +33,34 @@ uvicorn main:app --reload
 
 Then open `http://127.0.0.1:8000/docs` for the interactive API UI, or POST a workflow JSON to `http://127.0.0.1:8000/workflows`.
 
-## Example: Context Passing and Parallel Execution
+## Example: AI-Powered Context Workflow
 
 ```json
 {
   "steps": [
     {
-      "id": "FetchToken",
+      "id": "FetchLog",
       "type": "shell",
-      "command": "echo auth_token_123"
+      "config": {
+        "command": "echo ERROR: Database connection timed out on port 5432"
+      }
     },
     {
-      "id": "GetUserInfo",
-      "type": "rest",
-      "url": "https://httpbin.org/get?token=${{ steps.FetchToken.stdout }}",
-      "method": "GET",
-      "depends_on": ["FetchToken"]
+      "id": "AnalyzeLog",
+      "type": "ai",
+      "config": {
+        "prompt": "Classify this error log and suggest severity: ${{ steps.FetchLog.stdout }}",
+        "response_format": "json"
+      },
+      "depends_on": ["FetchLog"]
     },
     {
-      "id": "ProcessUser",
+      "id": "DispatchAlert",
       "type": "shell",
-      "command": "echo Status: ${{ steps.GetUserInfo.status_code }}, Token: ${{ steps.GetUserInfo.response.args.token }}",
-      "depends_on": ["GetUserInfo"]
-    },
-    {
-      "id": "IndepBranch",
-      "type": "shell",
-      "command": "echo Independent branch executing in parallel"
+      "config": {
+        "command": "echo Alert severity: ${{ steps.AnalyzeLog.response.severity }}"
+      },
+      "depends_on": ["AnalyzeLog"]
     }
   ]
 }

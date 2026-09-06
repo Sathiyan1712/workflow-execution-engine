@@ -1,6 +1,16 @@
 import asyncio
 import json
-from engine import run_workflow, StepStatus, WorkflowStatus, interpolate_value, interpolate_step_config
+import os
+from unittest.mock import patch
+import httpx
+from engine import (
+    run_workflow,
+    StepStatus,
+    WorkflowStatus,
+    interpolate_value,
+    interpolate_step_config,
+    handle_ai,
+)
 
 
 def show(title, steps):
@@ -75,10 +85,11 @@ def main():
     assert res_failing["results"]["IndepA"]["status"] == StepStatus.SUCCESS
     assert res_failing["results"]["IndepB"]["status"] == StepStatus.SUCCESS
 
-    # 4. Strict Input Validation & Safe Exception Handling (Missing config params)
+    # 4. Strict Input Validation (Shell, REST, AI)
     validation_failures = [
         {"id": "InvalidShell", "type": "shell", "config": {}},
         {"id": "InvalidRest", "type": "rest", "config": {"url": None}},
+        {"id": "InvalidAI", "type": "ai", "config": {}},
     ]
     res_validation = show("Strict Input Validation Failures", validation_failures)
     assert res_validation["status"] == WorkflowStatus.FAILED
@@ -86,8 +97,10 @@ def main():
     assert res_validation["results"]["InvalidShell"]["error"] == "Shell step requires a 'command' string in config."
     assert res_validation["results"]["InvalidRest"]["status"] == StepStatus.FAILED
     assert res_validation["results"]["InvalidRest"]["error"] == "REST step requires a 'url' string in config."
+    assert res_validation["results"]["InvalidAI"]["status"] == StepStatus.FAILED
+    assert res_validation["results"]["InvalidAI"]["error"] == "AI step requires a 'prompt' string in config."
 
-    # 5. Standard Non-Templated REST Step (Nested config)
+    # 5. Standard Non-Templated REST Step
     rest_standard = [
         {
             "id": "GetStaticURL",
@@ -170,7 +183,65 @@ def main():
     assert "Variable substitution error" in res_missing["results"]["Step2_BadVar"]["error"]
     assert res_missing["results"]["Step3_Skipped"]["status"] == StepStatus.SKIPPED
 
-    print("\nAll workflow tests including validation and error handling passed successfully!")
+    # 8. AI Node Integration & Structured JSON Parsing Test
+    mock_gemini_response = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {"text": json.dumps({"decision": "APPROVE", "score": 98, "reason": "Low risk"})}
+                    ]
+                }
+            }
+        ]
+    }
+
+    class MockResponse:
+        status_code = 200
+        text = json.dumps(mock_gemini_response)
+
+        def json(self):
+            return mock_gemini_response
+
+    async def mock_post(*args, **kwargs):
+        return MockResponse()
+
+    os.environ["GEMINI_API_KEY"] = "mock_gemini_key_123"
+    with patch("httpx.AsyncClient.post", side_effect=mock_post):
+        ai_pipeline = [
+            {
+                "id": "DataPrep",
+                "type": "shell",
+                "config": {
+                    "command": "echo user_transaction_42"
+                }
+            },
+            {
+                "id": "AiEval",
+                "type": "ai",
+                "config": {
+                    "prompt": "Evaluate transaction ${{ steps.DataPrep.stdout }}",
+                    "response_format": "json"
+                },
+                "depends_on": ["DataPrep"]
+            },
+            {
+                "id": "RouteAction",
+                "type": "shell",
+                "config": {
+                    "command": "echo Decision: ${{ steps.AiEval.response.decision }} with score ${{ steps.AiEval.response.score }}"
+                },
+                "depends_on": ["AiEval"]
+            }
+        ]
+        res_ai = show("AI Node Integration & Context Routing", ai_pipeline)
+        assert res_ai["status"] == WorkflowStatus.COMPLETED
+        assert res_ai["results"]["AiEval"]["status"] == StepStatus.SUCCESS
+        assert res_ai["results"]["AiEval"]["response"]["decision"] == "APPROVE"
+        assert res_ai["results"]["AiEval"]["response"]["score"] == 98
+        assert "Decision: APPROVE with score 98" in res_ai["results"]["RouteAction"]["stdout"]
+
+    print("\nAll workflow tests including AI node integration passed successfully!")
 
 
 if __name__ == "__main__":
