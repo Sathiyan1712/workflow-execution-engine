@@ -2,7 +2,10 @@ import asyncio
 from collections import deque
 import copy
 from enum import Enum
+import json
+import os
 import re
+import subprocess
 from typing import Any
 import httpx
 
@@ -140,49 +143,32 @@ async def handle_shell(step: dict) -> dict:
         raise ValueError("Shell step requires a 'command' string in config.")
 
     timeout = config.get("timeout") or step.get("timeout", 30)
-    proc = None
     try:
-        proc = await asyncio.create_subprocess_shell(
+        proc = await asyncio.to_thread(
+            subprocess.run,
             cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(
-            proc.communicate(),
+            shell=True,
+            capture_output=True,
+            text=True,
             timeout=timeout,
         )
-        stdout = stdout_bytes.decode("utf-8", errors="replace").strip() if stdout_bytes else ""
-        stderr = stderr_bytes.decode("utf-8", errors="replace").strip() if stderr_bytes else ""
+        stdout = proc.stdout.strip() if proc.stdout else ""
+        stderr = proc.stderr.strip() if proc.stderr else ""
+        is_success = (proc.returncode == 0)
 
-        returncode = proc.returncode
-        if returncode is None:
-            return {
-                "success": False,
-                "stdout": stdout,
-                "stderr": stderr,
-                "exit_code": -1,
-                "error": "Process terminated without returning an exit code",
-            }
-
-        is_success = (returncode == 0)
         res = {
             "success": is_success,
             "stdout": stdout,
             "stderr": stderr,
-            "exit_code": returncode,
+            "exit_code": proc.returncode,
         }
 
         if not is_success:
-            res["error"] = stderr if stderr else f"Command failed with exit code {returncode}"
+            res["error"] = stderr if stderr else f"Command failed with exit code {proc.returncode}"
 
         return res
 
-    except asyncio.TimeoutError:
-        try:
-            if proc is not None:
-                proc.kill()
-        except Exception:
-            pass
+    except subprocess.TimeoutExpired:
         return {
             "success": False,
             "error": f"Command timed out after {timeout} seconds",
@@ -239,6 +225,110 @@ async def handle_rest(step: dict) -> dict:
         return {
             "success": False,
             "error": str(e),
+        }
+
+
+@register_step_type("ai")
+async def handle_ai(step: dict) -> dict:
+    config = step.get("config")
+    if config is None or not isinstance(config, dict) or not config:
+        if isinstance(step, dict) and step.get("prompt"):
+            config = step
+        else:
+            raise ValueError("AI step requires a 'prompt' string in config.")
+
+    prompt = config.get("prompt") or step.get("prompt")
+    if not prompt or not isinstance(prompt, str):
+        raise ValueError("AI step requires a 'prompt' string in config.")
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("Missing 'GEMINI_API_KEY' environment variable for AI step.")
+
+    is_json = (config.get("response_format") == "json" or step.get("response_format") == "json")
+    if is_json:
+        prompt = (
+            f"{prompt}\n\n"
+            "IMPORTANT: Return ONLY raw, valid JSON. Do not include markdown formatting, backticks, or explanatory text."
+        )
+
+    model = config.get("model") or step.get("model") or "gemini-3.6-flash"
+    endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    payload: dict[str, Any] = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt}
+                ]
+            }
+        ]
+    }
+
+    if is_json:
+        payload["generationConfig"] = {
+            "responseMimeType": "application/json"
+        }
+
+    timeout = config.get("timeout") or step.get("timeout", 60)
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                endpoint,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            )
+
+        if resp.status_code >= 400:
+            return {
+                "success": False,
+                "status_code": resp.status_code,
+                "error": f"Gemini API error ({resp.status_code}): {resp.text}",
+            }
+
+        data = resp.json()
+        candidates = data.get("candidates", [])
+        if not candidates:
+            return {
+                "success": False,
+                "error": f"Gemini API returned no candidates in response: {data}",
+            }
+
+        parts = candidates[0].get("content", {}).get("parts", [])
+        if not parts:
+            return {
+                "success": False,
+                "error": f"Gemini API returned empty content parts: {data}",
+            }
+
+        raw_text = parts[0].get("text", "")
+
+        if is_json:
+            clean_text = raw_text.strip()
+            if clean_text.startswith("```"):
+                clean_text = re.sub(r"^```(?:json)?\s*", "", clean_text)
+                clean_text = re.sub(r"\s*```$", "", clean_text)
+            try:
+                parsed_response = json.loads(clean_text)
+            except json.JSONDecodeError as e:
+                return {
+                    "success": False,
+                    "error": f"Failed to parse AI response as JSON: {e}",
+                    "raw_response": raw_text,
+                }
+        else:
+            parsed_response = raw_text
+
+        return {
+            "success": True,
+            "response": parsed_response,
+            "raw_response": raw_text,
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"AI step execution failed: {str(e)}",
         }
 
 

@@ -1,10 +1,18 @@
+import asyncio
+import sys
 import uuid
 from typing import List, Optional, Any, Dict
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, status
 from pydantic import BaseModel
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from engine import run_workflow, validate_dag, StepStatus, WorkflowStatus
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 app = FastAPI(title="Workflow Execution Engine")
 
@@ -21,6 +29,9 @@ class Step(BaseModel):
     method: Optional[str] = "GET"
     body: Optional[Any] = None
     headers: Optional[Dict[str, str]] = None
+    prompt: Optional[str] = None
+    response_format: Optional[str] = None
+    model: Optional[str] = None
     timeout: Optional[int] = 30
 
 

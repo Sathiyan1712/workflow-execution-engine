@@ -1,34 +1,39 @@
 {
   "steps": [
     {
-      "id": "FetchToken",
+      "id": "FetchLog",
       "type": "shell",
       "config": {
-        "command": "echo auth_token_sample"
+        "command": "echo Out of memory error in worker pool 3"
       }
     },
     {
-      "id": "GetUserInfo",
-      "type": "rest",
+      "id": "AiTriage",
+      "type": "ai",
       "config": {
-        "url": "https://httpbin.org/get?token=${{ steps.FetchToken.stdout }}",
-        "method": "GET"
+        "prompt": "Analyze this incident log: ${{ steps.FetchLog.stdout }}. Return JSON with 'severity', 'root_cause', and 'recommended_action'.",
+        "response_format": "json"
       },
-      "depends_on": ["FetchToken"]
+      "depends_on": ["FetchLog"]
     },
     {
-      "id": "ProcessUser",
-      "type": "shell",
+      "id": "NotifySlack",
+      "type": "rest",
       "config": {
-        "command": "echo Fetched user with status ${{ steps.GetUserInfo.status_code }} and token ${{ steps.GetUserInfo.response.args.token }}"
+        "url": "https://httpbin.org/post",
+        "method": "POST",
+        "body": {
+          "alert_level": "${{ steps.AiTriage.response.severity }}",
+          "action": "${{ steps.AiTriage.response.recommended_action }}"
+        }
       },
-      "depends_on": ["GetUserInfo"]
+      "depends_on": ["AiTriage"]
     },
     {
       "id": "IndepBranch",
       "type": "shell",
       "config": {
-        "command": "echo Independent branch executing in parallel"
+        "command": "echo Background health check OK"
       }
     }
   ]
