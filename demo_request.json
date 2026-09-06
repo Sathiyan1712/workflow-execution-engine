@@ -1,8 +1,35 @@
 {
   "steps": [
-    {"id": "A", "type": "shell", "command": "echo Fetching data"},
-    {"id": "B", "type": "shell", "command": "echo Processing data", "depends_on": ["A"]},
-    {"id": "C", "type": "shell", "command": "exit /b 1", "depends_on": ["A"]},
-    {"id": "D", "type": "shell", "command": "echo Notify user", "depends_on": ["B", "C"]}
+    {
+      "id": "FetchToken",
+      "type": "shell",
+      "config": {
+        "command": "echo auth_token_sample"
+      }
+    },
+    {
+      "id": "GetUserInfo",
+      "type": "rest",
+      "config": {
+        "url": "https://httpbin.org/get?token=${{ steps.FetchToken.stdout }}",
+        "method": "GET"
+      },
+      "depends_on": ["FetchToken"]
+    },
+    {
+      "id": "ProcessUser",
+      "type": "shell",
+      "config": {
+        "command": "echo Fetched user with status ${{ steps.GetUserInfo.status_code }} and token ${{ steps.GetUserInfo.response.args.token }}"
+      },
+      "depends_on": ["GetUserInfo"]
+    },
+    {
+      "id": "IndepBranch",
+      "type": "shell",
+      "config": {
+        "command": "echo Independent branch executing in parallel"
+      }
+    }
   ]
 }
