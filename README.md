@@ -1,29 +1,25 @@
 # Workflow Execution Engine
 
-A lightweight, extensible workflow execution engine that runs a set of
-steps (shell commands or REST API calls) in dependency order, defined
-entirely via a JSON payload.
+An asynchronous, parallel workflow execution engine that runs a directed acyclic graph (DAG) of steps (shell commands, REST API calls, or custom handlers) with dependency resolution, variable substitution/context passing, granular failure cascading, and non-blocking background processing.
 
 Built for the Nutanix Hackathon — Project Area 4: Workflow Execution Engine.
 
 ## Features
-- Define workflows as JSON: a list of steps with an `id`, `type`, and
-  `depends_on` list.
-- Dependency-aware execution using topological sort (Kahn's algorithm) —
-  steps only run after everything they depend on has completed.
-- Supports two step types out of the box: `shell` (runs a shell command)
-  and `rest` (makes an HTTP request).
-- **Extensible by design**: new step types can be added via a registry
-  pattern (`@register_step_type("name")`) without modifying the core
-  engine or execution logic.
-- Exposed as a REST API via FastAPI for easy integration and demoing.
+- **JSON-defined DAGs**: Define workflows with step IDs, types, and `depends_on` dependencies.
+- **Asynchronous Parallel Execution**: Nodes whose dependencies have succeeded execute concurrently via standard Python `asyncio`.
+- **Variable Substitution & Context Passing**: Pass outputs dynamically between steps using `${{ steps.STEP_ID.stdout }}` or nested JSON `${{ steps.STEP_ID.response.json_key }}`.
+- **Background Processing**: `POST /workflows` accepts the DAG payload immediately with `202 Accepted` and executes the pipeline in the background.
+- **Explicit Lifecycle States**: Granular status tracking (`PENDING`, `RUNNING`, `SUCCESS`, `FAILED`, `SKIPPED`) at both step and workflow levels.
+- **Granular Failure Propagation**: If a step fails or a variable is missing, downstream dependents are recursively marked as `SKIPPED`, while independent parallel branches continue executing to completion.
+- **Extensible Registry**: Register new step types via `@register_step_type("name")` with non-blocking `async def` handlers.
+- **REST API**: Exposed via FastAPI with interactive OpenAPI documentation.
 
 ## Architecture
 
-
-- `engine.py` — core logic: dependency sorting, step execution, registry
-- `main.py` — FastAPI wrapper exposing the engine over HTTP
-- `test_engine.py` — standalone tests for the engine logic
+- `engine.py` — Core async execution engine: DAG validation, templating & context variable resolution, dynamic step scheduler, failure propagation, and step registry.
+- `main.py` — FastAPI service providing non-blocking background job submission and polling endpoints.
+- `test_engine.py` — Test suite covering linear, parallel branching, context passing/interpolation, error handling, and independent branches.
+- `test_api.py` — End-to-end integration test verifying FastAPI background tasks and variable substitution over HTTP.
 
 ## Running it
 
@@ -34,31 +30,39 @@ pip install -r requirements.txt
 uvicorn main:app --reload
 ```
 
-Then open `http://127.0.0.1:8000/docs` for an interactive API UI, or POST
-a workflow JSON to `http://127.0.0.1:8000/workflows`.
+Then open `http://127.0.0.1:8000/docs` for the interactive API UI, or POST a workflow JSON to `http://127.0.0.1:8000/workflows`.
 
-## Example: a workflow with branching and failure handling
+## Example: Context Passing and Parallel Execution
 
 ```json
 {
   "steps": [
-    {"id": "A", "type": "shell", "command": "echo Fetching data"},
-    {"id": "B", "type": "shell", "command": "echo Processing data", "depends_on": ["A"]},
-    {"id": "C", "type": "shell", "command": "exit /b 1", "depends_on": ["A"]},
-    {"id": "D", "type": "shell", "command": "echo Notify user", "depends_on": ["B", "C"]}
+    {
+      "id": "FetchToken",
+      "type": "shell",
+      "command": "echo auth_token_123"
+    },
+    {
+      "id": "GetUserInfo",
+      "type": "rest",
+      "url": "https://httpbin.org/get?token=${{ steps.FetchToken.stdout }}",
+      "method": "GET",
+      "depends_on": ["FetchToken"]
+    },
+    {
+      "id": "ProcessUser",
+      "type": "shell",
+      "command": "echo Status: ${{ steps.GetUserInfo.status_code }}, Token: ${{ steps.GetUserInfo.response.args.token }}",
+      "depends_on": ["GetUserInfo"]
+    },
+    {
+      "id": "IndepBranch",
+      "type": "shell",
+      "command": "echo Independent branch executing in parallel"
+    }
   ]
 }
 ```
-
-Here, step `D` depends on both `B` and `C`. Since `C` fails, `D` is
-correctly never executed — demonstrating dependency-aware failure
-handling.
-
-## What we'd add with more time
-- Retry logic with configurable backoff for failed steps
-- Persistent storage (Postgres/Redis) instead of in-memory state
-- Additional step types (database queries, email/notifications)
-- A minimal web UI for building/monitoring workflows visually
 
 ## Team
 Sathiyan Anand Sinha & Pranav Shalya
