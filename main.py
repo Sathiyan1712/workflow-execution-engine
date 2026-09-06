@@ -32,6 +32,12 @@ class Step(BaseModel):
     prompt: Optional[str] = None
     response_format: Optional[str] = None
     model: Optional[str] = None
+    query: Optional[str] = None
+    data: Optional[Any] = None
+    expression: Optional[str] = None
+    operator: Optional[str] = None
+    left: Optional[Any] = None
+    right: Optional[Any] = None
     timeout: Optional[int] = 30
 
 

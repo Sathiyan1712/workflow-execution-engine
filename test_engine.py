@@ -241,7 +241,236 @@ def main():
         assert res_ai["results"]["AiEval"]["response"]["score"] == 98
         assert "Decision: APPROVE with score 98" in res_ai["results"]["RouteAction"]["stdout"]
 
-    print("\nAll workflow tests including AI node integration passed successfully!")
+    # 9. JQ Transformation Node Test
+    jq_pipeline = [
+        {
+            "id": "GeneratePayload",
+            "type": "shell",
+            "config": {
+                "command": 'echo {"users": [{"name": "alice", "active": true}, {"name": "bob", "active": false}, {"name": "charlie", "active": true}]}'
+            }
+        },
+        {
+            "id": "FilterActiveUsers",
+            "type": "jq",
+            "config": {
+                "query": "[.users[] | select(.active == true) | .name]",
+                "data": "${{ steps.GeneratePayload.stdout }}"
+            },
+            "depends_on": ["GeneratePayload"]
+        },
+        {
+            "id": "ReshapeSummary",
+            "type": "jq",
+            "config": {
+                "query": "{active_count: length, active_list: .}",
+                "data": "${{ steps.FilterActiveUsers.response }}"
+            },
+            "depends_on": ["FilterActiveUsers"]
+        },
+        {
+            "id": "OutputResult",
+            "type": "shell",
+            "config": {
+                "command": "echo Found ${{ steps.ReshapeSummary.response.active_count }} active users"
+            },
+            "depends_on": ["ReshapeSummary"]
+        }
+    ]
+    res_jq = show("JQ Transformation Node Pipeline", jq_pipeline)
+    assert res_jq["status"] == WorkflowStatus.COMPLETED
+    assert res_jq["results"]["FilterActiveUsers"]["status"] == StepStatus.SUCCESS
+    assert res_jq["results"]["FilterActiveUsers"]["response"] == ["alice", "charlie"]
+    assert res_jq["results"]["ReshapeSummary"]["status"] == StepStatus.SUCCESS
+    assert res_jq["results"]["ReshapeSummary"]["response"]["active_count"] == 2
+    assert "Found 2 active users" in res_jq["results"]["OutputResult"]["stdout"]
+
+    # 10. JQ Invalid Query Error Handling
+    bad_jq_pipeline = [
+        {
+            "id": "BadJqStep",
+            "type": "jq",
+            "config": {
+                "query": ".[invalid_syntax",
+                "data": {"a": 1}
+            }
+        }
+    ]
+    res_bad_jq = show("JQ Invalid Syntax Error Handling", bad_jq_pipeline)
+    assert res_bad_jq["status"] == WorkflowStatus.FAILED
+    assert res_bad_jq["results"]["BadJqStep"]["status"] == StepStatus.FAILED
+    assert "JQ transformation error" in res_bad_jq["results"]["BadJqStep"]["error"]
+
+    # 11. Condition Node: True Evaluation & Downstream Execution
+    condition_true_pipeline = [
+        {
+            "id": "GetMetrics",
+            "type": "shell",
+            "config": {
+                "command": "echo 85"
+            }
+        },
+        {
+            "id": "CheckThreshold",
+            "type": "condition",
+            "config": {
+                "expression": "${{ steps.GetMetrics.stdout }} >= 80"
+            },
+            "depends_on": ["GetMetrics"]
+        },
+        {
+            "id": "TriggerAlert",
+            "type": "shell",
+            "config": {
+                "command": "echo High CPU alert triggered"
+            },
+            "depends_on": ["CheckThreshold"]
+        }
+    ]
+    res_cond_true = show("Condition Node: True Evaluation & Execution", condition_true_pipeline)
+    assert res_cond_true["status"] == WorkflowStatus.COMPLETED
+    assert res_cond_true["results"]["CheckThreshold"]["status"] == StepStatus.SUCCESS
+    assert res_cond_true["results"]["CheckThreshold"]["condition_met"] is True
+    assert res_cond_true["results"]["CheckThreshold"]["skip_downstream"] is False
+    assert res_cond_true["results"]["TriggerAlert"]["status"] == StepStatus.SUCCESS
+    assert "High CPU alert triggered" in res_cond_true["results"]["TriggerAlert"]["stdout"]
+
+    # 12. Condition Node: False Evaluation, Selective Branch Skipping, & Workflow COMPLETED
+    condition_false_pipeline = [
+        {
+            "id": "GetStatus",
+            "type": "shell",
+            "config": {
+                "command": "echo healthy"
+            }
+        },
+        {
+            "id": "CheckUnhealthy",
+            "type": "condition",
+            "config": {
+                "expression": "'${{ steps.GetStatus.stdout }}' == 'unhealthy'"
+            },
+            "depends_on": ["GetStatus"]
+        },
+        {
+            "id": "RestartService",
+            "type": "shell",
+            "config": {
+                "command": "echo Restarting service..."
+            },
+            "depends_on": ["CheckUnhealthy"]
+        },
+        {
+            "id": "NotifyOnRestart",
+            "type": "shell",
+            "config": {
+                "command": "echo Notification sent"
+            },
+            "depends_on": ["RestartService"]
+        },
+        {
+            "id": "IndependentTelemetry",
+            "type": "shell",
+            "config": {
+                "command": "echo Telemetry logging OK"
+            }
+        }
+    ]
+    res_cond_false = show("Condition Node: False Evaluation & Selective Branch Deactivation", condition_false_pipeline)
+    assert res_cond_false["status"] == WorkflowStatus.COMPLETED
+    assert res_cond_false["success"] is True
+    assert res_cond_false["results"]["CheckUnhealthy"]["status"] == StepStatus.SUCCESS
+    assert res_cond_false["results"]["CheckUnhealthy"]["condition_met"] is False
+    assert res_cond_false["results"]["CheckUnhealthy"]["skip_downstream"] is True
+    assert res_cond_false["results"]["RestartService"]["status"] == StepStatus.SKIPPED
+    assert "Skipped because conditional step 'CheckUnhealthy' evaluated to False" in res_cond_false["results"]["RestartService"]["error"]
+    assert res_cond_false["results"]["NotifyOnRestart"]["status"] == StepStatus.SKIPPED
+    assert res_cond_false["results"]["IndependentTelemetry"]["status"] == StepStatus.SUCCESS
+
+    # 13. Condition Node: Structured Comparison Syntax (left, operator, right)
+    structured_cond_pipeline = [
+        {
+            "id": "InitData",
+            "type": "shell",
+            "config": {
+                "command": "echo CRITICAL_ERROR"
+            }
+        },
+        {
+            "id": "CondStructured",
+            "type": "condition",
+            "config": {
+                "left": "${{ steps.InitData.stdout }}",
+                "operator": "contains",
+                "right": "ERROR"
+            },
+            "depends_on": ["InitData"]
+        },
+        {
+            "id": "EscalateIncident",
+            "type": "shell",
+            "config": {
+                "command": "echo Incident escalated successfully"
+            },
+            "depends_on": ["CondStructured"]
+        }
+    ]
+    res_struct_cond = show("Condition Node: Structured Operands Syntax", structured_cond_pipeline)
+    assert res_struct_cond["status"] == WorkflowStatus.COMPLETED
+    assert res_struct_cond["results"]["CondStructured"]["status"] == StepStatus.SUCCESS
+    assert res_struct_cond["results"]["CondStructured"]["condition_met"] is True
+    assert res_struct_cond["results"]["EscalateIncident"]["status"] == StepStatus.SUCCESS
+
+    # 14. Condition Node: Invalid Syntax / Unsafe Evaluation Handling
+    bad_cond_pipeline = [
+        {
+            "id": "BadCondition",
+            "type": "condition",
+            "config": {
+                "expression": "1 + * 2"
+            }
+        }
+    ]
+    res_bad_cond = show("Condition Node: Malformed Syntax Handling", bad_cond_pipeline)
+    assert res_bad_cond["status"] == WorkflowStatus.FAILED
+    assert res_bad_cond["results"]["BadCondition"]["status"] == StepStatus.FAILED
+    assert "Condition expression evaluation failed" in res_bad_cond["results"]["BadCondition"]["error"]
+
+    # 15. End-to-End AI Triage -> Condition Branching -> Remediation
+    with patch("httpx.AsyncClient.post", side_effect=mock_post):
+        e2e_pipeline = [
+            {
+                "id": "AnalyzeAlert",
+                "type": "ai",
+                "config": {
+                    "prompt": "Evaluate alert payload",
+                    "response_format": "json"
+                }
+            },
+            {
+                "id": "CheckApproval",
+                "type": "condition",
+                "config": {
+                    "expression": "'${{ steps.AnalyzeAlert.response.decision }}' == 'APPROVE' and ${{ steps.AnalyzeAlert.response.score }} > 90"
+                },
+                "depends_on": ["AnalyzeAlert"]
+            },
+            {
+                "id": "DeployPatch",
+                "type": "shell",
+                "config": {
+                    "command": "echo Patch auto-deployed for decision ${{ steps.AnalyzeAlert.response.decision }}"
+                },
+                "depends_on": ["CheckApproval"]
+            }
+        ]
+        res_e2e = show("End-to-End AI + Condition + Action Pipeline", e2e_pipeline)
+        assert res_e2e["status"] == WorkflowStatus.COMPLETED
+        assert res_e2e["results"]["CheckApproval"]["condition_met"] is True
+        assert res_e2e["results"]["DeployPatch"]["status"] == StepStatus.SUCCESS
+        assert "Patch auto-deployed for decision APPROVE" in res_e2e["results"]["DeployPatch"]["stdout"]
+
+    print("\nAll workflow tests including AI, JQ, and Condition nodes passed successfully!")
 
 
 if __name__ == "__main__":

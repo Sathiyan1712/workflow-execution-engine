@@ -48,5 +48,69 @@ def test_api_context_passing():
     assert "admin_token_999" in data["results"]["Report"]["stdout"]
     print("FastAPI Context Variable Passing with Nested Config Passed!")
 
+
+def test_api_condition_routing():
+    payload = {
+        "steps": [
+            {
+                "id": "GetCode",
+                "type": "shell",
+                "config": {
+                    "command": "echo 200"
+                }
+            },
+            {
+                "id": "CheckOK",
+                "type": "condition",
+                "config": {
+                    "expression": "${{ steps.GetCode.stdout }} == 200"
+                },
+                "depends_on": ["GetCode"]
+            },
+            {
+                "id": "SuccessPath",
+                "type": "shell",
+                "config": {
+                    "command": "echo All systems operational"
+                },
+                "depends_on": ["CheckOK"]
+            },
+            {
+                "id": "CheckFailed",
+                "type": "condition",
+                "config": {
+                    "expression": "${{ steps.GetCode.stdout }} != 200"
+                },
+                "depends_on": ["GetCode"]
+            },
+            {
+                "id": "RemediationPath",
+                "type": "shell",
+                "config": {
+                    "command": "echo Triggering recovery"
+                },
+                "depends_on": ["CheckFailed"]
+            }
+        ]
+    }
+
+    res = client.post("/workflows", json=payload)
+    assert res.status_code == 202
+    wid = res.json()["workflow_id"]
+
+    time.sleep(1)
+
+    get_res = client.get(f"/workflows/{wid}")
+    data = get_res.json()
+    print("\nConditional API Workflow Status:", data["status"])
+    assert data["status"] == "COMPLETED"
+    assert data["results"]["CheckOK"]["condition_met"] is True
+    assert data["results"]["SuccessPath"]["status"] == "SUCCESS"
+    assert data["results"]["CheckFailed"]["condition_met"] is False
+    assert data["results"]["RemediationPath"]["status"] == "SKIPPED"
+    print("FastAPI Condition Branch Routing Passed!")
+
+
 if __name__ == "__main__":
     test_api_context_passing()
+    test_api_condition_routing()
