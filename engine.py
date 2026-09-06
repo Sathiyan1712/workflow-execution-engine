@@ -2,12 +2,15 @@ import asyncio
 from collections import deque
 import copy
 from enum import Enum
+import ast
+import operator as op
 import json
 import os
 import re
 import subprocess
 from typing import Any
 import httpx
+import jq
 
 
 class StepStatus(str, Enum):
@@ -332,6 +335,253 @@ async def handle_ai(step: dict) -> dict:
         }
 
 
+@register_step_type("jq")
+async def handle_jq(step: dict) -> dict:
+    config = step.get("config")
+    if config is None or not isinstance(config, dict) or not config:
+        if isinstance(step, dict) and step.get("query"):
+            config = step
+        else:
+            raise ValueError("JQ step requires a 'query' string in config.")
+
+    query = config.get("query") or step.get("query")
+    if not query or not isinstance(query, str):
+        raise ValueError("JQ step requires a 'query' string in config.")
+
+    if "data" not in config and "data" not in step:
+        raise ValueError("JQ step requires a 'data' source in config.")
+
+    raw_data = config.get("data") if "data" in config else step.get("data")
+
+    # If data is a JSON string, attempt to parse it to a Python object
+    data = raw_data
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except Exception:
+            pass
+
+    def _run_jq(q: str, d: Any):
+        compiled = jq.compile(q)
+        results = compiled.input_value(d).all()
+        if len(results) == 1:
+            return results[0]
+        elif len(results) == 0:
+            return None
+        return results
+
+    try:
+        transformed = await asyncio.to_thread(_run_jq, query, data)
+        return {
+            "success": True,
+            "response": transformed,
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"JQ transformation error: {str(e)}",
+        }
+
+
+# --- Safe Expression Evaluation for Condition Nodes ---
+AST_OPERATORS = {
+    ast.Eq: op.eq,
+    ast.NotEq: op.ne,
+    ast.Lt: op.lt,
+    ast.LtE: op.le,
+    ast.Gt: op.gt,
+    ast.GtE: op.ge,
+    ast.In: lambda a, b: a in b,
+    ast.NotIn: lambda a, b: a not in b,
+    ast.Is: op.is_,
+    ast.IsNot: op.is_not,
+}
+
+AST_BOOL_OPS = {
+    ast.And: all,
+    ast.Or: any,
+}
+
+AST_UNARY_OPS = {
+    ast.Not: op.not_,
+    ast.USub: op.neg,
+    ast.UAdd: op.pos,
+}
+
+SAFE_NAMES = {
+    "true": True,
+    "True": True,
+    "false": False,
+    "False": False,
+    "null": None,
+    "none": None,
+    "None": None,
+}
+
+
+def _coerce_pair(a: Any, b: Any) -> tuple[Any, Any]:
+    if isinstance(a, (int, float)) and isinstance(b, str):
+        try:
+            return a, type(a)(b)
+        except (ValueError, TypeError):
+            pass
+    elif isinstance(b, (int, float)) and isinstance(a, str):
+        try:
+            return type(b)(a), b
+        except (ValueError, TypeError):
+            pass
+    elif isinstance(a, bool) and isinstance(b, str):
+        if b.lower() in ("true", "false"):
+            return a, b.lower() == "true"
+    elif isinstance(b, bool) and isinstance(a, str):
+        if a.lower() in ("true", "false"):
+            return a.lower() == "true", b
+    return a, b
+
+
+def _safe_compare(op_func, a: Any, b: Any) -> bool:
+    try:
+        if op_func(a, b):
+            return True
+    except TypeError:
+        pass
+
+    coerced_a, coerced_b = _coerce_pair(a, b)
+    if (coerced_a, coerced_b) != (a, b):
+        try:
+            return op_func(coerced_a, coerced_b)
+        except TypeError:
+            pass
+    return False
+
+
+def safe_eval_node(node: ast.AST) -> Any:
+    if isinstance(node, ast.Expression):
+        return safe_eval_node(node.body)
+    elif isinstance(node, ast.Constant):
+        return node.value
+    elif isinstance(node, ast.Name):
+        if node.id in SAFE_NAMES:
+            return SAFE_NAMES[node.id]
+        raise ValueError(f"Disallowed name in expression: '{node.id}'")
+    elif isinstance(node, ast.UnaryOp):
+        operand = safe_eval_node(node.operand)
+        op_func = AST_UNARY_OPS.get(type(node.op))
+        if op_func is None:
+            raise ValueError(f"Unsupported unary operator: {type(node.op).__name__}")
+        return op_func(operand)
+    elif isinstance(node, ast.BoolOp):
+        if isinstance(node.op, ast.And):
+            for val in node.values:
+                if not safe_eval_node(val):
+                    return False
+            return True
+        elif isinstance(node.op, ast.Or):
+            for val in node.values:
+                if safe_eval_node(val):
+                    return True
+            return False
+        else:
+            raise ValueError(f"Unsupported boolean operator: {type(node.op).__name__}")
+    elif isinstance(node, ast.Compare):
+        left = safe_eval_node(node.left)
+        for cmp_op, comparator in zip(node.ops, node.comparators):
+            right = safe_eval_node(comparator)
+            op_func = AST_OPERATORS.get(type(cmp_op))
+            if op_func is None:
+                raise ValueError(f"Unsupported comparison operator: {type(cmp_op).__name__}")
+            if not _safe_compare(op_func, left, right):
+                return False
+            left = right
+        return True
+    elif isinstance(node, (ast.List, ast.Tuple)):
+        return [safe_eval_node(elt) for elt in node.elts]
+    elif isinstance(node, ast.Dict):
+        return {safe_eval_node(k): safe_eval_node(v) for k, v in zip(node.keys, node.values)}
+    else:
+        raise ValueError(f"Unsupported expression construct: {type(node).__name__}")
+
+
+def evaluate_structured(left: Any, operator_str: str, right: Any) -> bool:
+    op_str = str(operator_str).strip().lower()
+    left_coerced, right_coerced = _coerce_pair(left, right)
+
+    if op_str in ("==", "="):
+        return left_coerced == right_coerced
+    elif op_str == "!=":
+        return left_coerced != right_coerced
+    elif op_str == ">":
+        return left_coerced > right_coerced
+    elif op_str == "<":
+        return left_coerced < right_coerced
+    elif op_str == ">=":
+        return left_coerced >= right_coerced
+    elif op_str == "<=":
+        return left_coerced <= right_coerced
+    elif op_str == "in":
+        return left in right
+    elif op_str == "not in":
+        return left not in right
+    elif op_str == "contains":
+        return right in left
+    elif op_str == "is":
+        return left is right
+    elif op_str == "is not":
+        return left is not right
+    else:
+        raise ValueError(f"Unsupported operator '{operator_str}' in condition step.")
+
+
+@register_step_type("condition")
+async def handle_condition(step: dict) -> dict:
+    config = step.get("config")
+    if config is None or not isinstance(config, dict) or not config:
+        if isinstance(step, dict) and (step.get("expression") is not None or step.get("operator") is not None):
+            config = step
+        else:
+            raise ValueError("Condition step requires 'expression' or structured ('operator', 'left', 'right') config.")
+
+    expression = config.get("expression") if "expression" in config else step.get("expression")
+    operator_val = config.get("operator") if "operator" in config else step.get("operator")
+
+    if expression is not None:
+        if isinstance(expression, bool):
+            met = expression
+        elif isinstance(expression, str) and expression.strip() != "":
+            expr_str = expression.strip()
+            try:
+                tree = ast.parse(expr_str, mode="eval")
+                met = bool(safe_eval_node(tree))
+            except Exception as e:
+                return {
+                    "success": False,
+                    "error": f"Condition expression evaluation failed: {str(e)}",
+                }
+        else:
+            raise ValueError("Condition step 'expression' must be a non-empty string or boolean.")
+    elif operator_val is not None:
+        left = config.get("left") if "left" in config else step.get("left")
+        right = config.get("right") if "right" in config else step.get("right")
+        try:
+            met = bool(evaluate_structured(left, operator_val, right))
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Condition structured evaluation failed: {str(e)}",
+            }
+    else:
+        raise ValueError("Condition step requires 'expression' or 'operator'/'left'/'right' in config.")
+
+    skip_downstream = not met
+    return {
+        "success": True,
+        "result": met,
+        "condition_met": met,
+        "response": met,
+        "skip_downstream": skip_downstream,
+    }
+
+
 async def execute_step(step: dict, context: dict = None) -> dict:
     result = {"id": step["id"], "type": step["type"]}
 
@@ -371,7 +621,9 @@ async def execute_step(step: dict, context: dict = None) -> dict:
     return result
 
 
-def _mark_descendants_skipped(failed_id: str, downstream: dict, results: dict) -> None:
+def _mark_descendants_skipped(failed_id: str, downstream: dict, results: dict, reason: str = None) -> None:
+    if reason is None:
+        reason = f"Skipped due to failure in upstream step '{failed_id}'"
     visited = set()
     queue = list(downstream.get(failed_id, []))
     while queue:
@@ -382,7 +634,7 @@ def _mark_descendants_skipped(failed_id: str, downstream: dict, results: dict) -
                 results[child_id].update({
                     "status": StepStatus.SKIPPED,
                     "success": False,
-                    "error": f"Skipped due to failure in upstream step '{failed_id}'",
+                    "error": reason,
                 })
             queue.extend(downstream.get(child_id, []))
 
@@ -463,13 +715,21 @@ async def run_workflow(steps: list[dict], workflow_state: dict = None) -> dict:
             if results[step_id]["status"] == StepStatus.SUCCESS:
                 # Add successful step output to context for downstream steps
                 context["steps"][step_id] = {**results[step_id]}
+                if res.get("skip_downstream"):
+                    _mark_descendants_skipped(
+                        step_id,
+                        downstream,
+                        results,
+                        reason=f"Skipped because conditional step '{step_id}' evaluated to False",
+                    )
             elif results[step_id]["status"] == StepStatus.FAILED:
                 _mark_descendants_skipped(step_id, downstream, results)
 
-    overall_success = all(
-        res.get("status") == StepStatus.SUCCESS
+    has_failed = any(
+        res.get("status") == StepStatus.FAILED
         for res in results.values()
     )
+    overall_success = not has_failed
     workflow_status = WorkflowStatus.COMPLETED if overall_success else WorkflowStatus.FAILED
 
     output = {
