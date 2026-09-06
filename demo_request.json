@@ -1,0 +1,8 @@
+{
+  "steps": [
+    {"id": "A", "type": "shell", "command": "echo Fetching data"},
+    {"id": "B", "type": "shell", "command": "echo Processing data", "depends_on": ["A"]},
+    {"id": "C", "type": "shell", "command": "exit /b 1", "depends_on": ["A"]},
+    {"id": "D", "type": "shell", "command": "echo Notify user", "depends_on": ["B", "C"]}
+  ]
+}
