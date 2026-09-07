@@ -31,6 +31,15 @@ async def serve_dashboard():
     return HTMLResponse(content="<h1>Dashboard file not found</h1>", status_code=404)
 
 
+@app.get("/presentation", response_class=HTMLResponse)
+async def serve_presentation():
+    pres_path = Path(__file__).parent / "presentation.html"
+    if pres_path.exists():
+        return HTMLResponse(content=pres_path.read_text(encoding="utf-8"))
+    return HTMLResponse(content="<h1>Presentation file not found</h1>", status_code=404)
+
+
+
 
 class Step(BaseModel):
     id: str

@@ -119,7 +119,17 @@ def test_api_dashboard_endpoint():
     print("Dashboard GET / endpoint returned 200 OK with UI HTML!")
 
 
+def test_api_presentation_endpoint():
+    res = client.get("/presentation")
+    assert res.status_code == 200
+    assert "Enterprise Agentic Workflow Orchestrator | Presentation" in res.text
+    assert "Nutanix PS-4" in res.text
+    print("Presentation GET /presentation endpoint returned 200 OK with slide deck!")
+
+
 if __name__ == "__main__":
     test_api_dashboard_endpoint()
+    test_api_presentation_endpoint()
     test_api_context_passing()
     test_api_condition_routing()
+

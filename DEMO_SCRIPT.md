@@ -1,226 +1,136 @@
-# Workflow Execution Engine — Live Demo & Presentation Script
-**Nutanix Hackathon — Problem Statement 4**  
+# 3-Minute Live Presentation & Demonstration Script
+**Nutanix Hackathon — Problem Statement 4: Workflow Execution Engine**  
 **Team:** Sathiyan Anand Sinha & Pranav Shalya
 
 ---
 
-## 1. Executive Pitch (The "Why") — *[30 Seconds]*
+## ⏱️ Presentation Timing Breakdown (3 Minutes Total)
 
-> *"Modern cloud and hybrid infrastructure is inherently distributed, asynchronous, and unpredictable. Traditional automation relies on fragile linear bash scripts or monolithic cron jobs that break on the first error, block event loops, and lack real-time decision-making.*
+| Section | Duration | Focus Area |
+| :--- | :--- | :--- |
+| **1. Executive Pitch** | 0:00 - 0:45 (45s) | Problem statement, infrastructure challenges, and our solution |
+| **2. Architecture & DAG Core** | 0:45 - 1:15 (30s) | Kahn's algorithm, async parallel execution, and state engine |
+| **3. Live UI Demonstration** | 1:15 - 2:30 (75s) | Walkthrough of 3 Live Presets on the Visual Graph Dashboard |
+| **4. Judge Evaluation Mapping** | 2:30 - 3:00 (30s) | Innovation, completeness, impact, and code quality wrap-up |
+
+---
+
+## 1. Executive Pitch (The "Why") — *[0:00 - 0:45]*
+
+> **Speaker Notes:**
 >
-> *We built the **Next-Gen Workflow Execution Engine**: a lightweight, highly extensible, asynchronous orchestrator that ingests complex DAGs defined in JSON. It features **true parallel concurrency**, **non-blocking background execution**, **granular failure isolation**, **dynamic context variable passing**, and an **integrated AI Reasoning Node powered by Gemini 3.6 Flash** to triage and remediate infrastructure incidents in real time."*
+> *"Good morning judges. Modern enterprise datacenters and hybrid clouds are distributed, high-velocity, and unpredictable. When an infrastructure alert fires at 2 AM, traditional automation relies on linear bash scripts or static cron jobs. These legacy approaches are brittle: they block event loops, break on the first error with no branch isolation, and fundamentally lack real-time reasoning.*
+>
+> *To solve this, we built the **Enterprise-Grade Agentic Workflow Orchestrator**.*
+>
+> *It is a lightweight, high-throughput asynchronous execution engine that ingests complex Directed Acyclic Graphs (DAGs) in pure JSON. It executes independent tasks in **true parallel concurrency**, features **non-blocking background ingestion**, provides **granular failure isolation**, and embeds a **native Gemini 3.6 Flash AI Reasoning Node** alongside **safe AST conditional routing** to achieve autonomous, self-healing infrastructure operations."*
 
 ---
 
-## 2. Architecture & Core Capabilities (What We Built)
+## 2. Architecture & Key Innovations — *[0:45 - 1:15]*
 
-```mermaid
-flowchart TD
-    Client["Client / API Gateway"] -->|"POST /workflows (JSON DAG)"| API["FastAPI Ingestion Layer"]
-    API -->|"1. Validate DAG (Kahn's Algo)"| Val{"Cycles / Missing Deps?"}
-    Val -->|Invalid| Err["400 Bad Request"]
-    Val -->|Valid| BG["FastAPI BackgroundTasks"]
-    API -->|"Return 202 Accepted (workflow_id)"| Client
-    
-    BG -->|"Async Worker Loop"| Engine["Core Execution Engine (asyncio)"]
-    
-    subgraph DAG_Execution["Dynamic Async Parallel Execution Engine"]
-        Engine -->|"Resolve Zero In-Degree Nodes"| ReadyNodes["Ready Nodes Queue"]
-        ReadyNodes --> TaskA["Node 1 (Shell): Fetch Incident Logs"]
-        ReadyNodes --> TaskB["Node 2 (Shell): Independent Health Check"]
-        
-        TaskA -->|"Output to Context"| Ctx[("Global Run Context")]
-        Ctx -->|"Variable Interpolation ${{ steps.TaskA.stdout }}"| TaskC["Node 3 (AI): Gemini 3.6 Flash Triage"]
-        
-        TaskC -->|"Structured JSON Context"| Ctx
-        Ctx -->|"Interpolate ${{ steps.TaskC.response.severity }}"| TaskD["Node 4 (REST): Webhook / Alert Dispatch"]
-    end
-    
-    TaskD --> Done["Overall Status: COMPLETED / FAILED"]
-```
-
-### Core Innovations & Technical Highlights
-1. **Asynchronous Parallel DAG Scheduling (`engine.py`):**
-   - Implements **Kahn’s Algorithm** (`topological_sort`) for upfront DAG cycle and dependency validation.
-   - Evaluates dependency resolution dynamically: nodes whose dependencies reach `SUCCESS` execute in parallel via `asyncio.create_task` and non-blocking worker threads (`asyncio.to_thread` for subprocesses, `httpx.AsyncClient` for REST and AI).
-2. **Non-Blocking Background Ingestion (`main.py`):**
-   - `POST /workflows` validates the graph upfront and immediately returns `202 Accepted` with a UUID `workflow_id`.
-   - Execution runs asynchronously in FastAPI's `BackgroundTasks`, enabling live polling via `GET /workflows/{workflow_id}`.
-3. **Granular Lifecycle States & Failure Isolation:**
-   - Explicit state transitions: `PENDING` $\to$ `RUNNING` $\to$ `SUCCESS` | `FAILED` | `SKIPPED`.
-   - If a step fails, the engine cascades `SKIPPED` only to its downstream dependency subgraph (`_mark_descendants_skipped`). **Independent parallel branches continue running to full completion.**
-4. **Dynamic Variable Substitution & Context Data Passing:**
-   - Global runtime `context = {"steps": {}}` captures stdout, stderr, exit codes, and JSON responses.
-   - Expression interpolation `${{ steps.STEP_ID.property }}` and deep dot/bracket indexing (e.g. `${{ steps.ai.response.recommended_action }}`) dynamically reconstruct configs before step execution.
-5. **Native AI Reasoning Node (`type: "ai"`):**
-   - Integrated with **Gemini 3.6 Flash API** for real-time anomaly triage, classification, and decision routing.
-   - Enforces structured JSON output (`response_format: "json"`) with automatic fence-stripping and error handling.
-6. **JQ JSON Transformation Node (`type: "jq"`):**
-   - Filters, maps, and reshapes structured payloads dynamically between pipeline stages using standard JQ query expressions.
-7. **Conditional Routing Node (`type: "condition"`):**
-   - Evaluates pythonic boolean expressions and structured comparisons (`left`, `operator`, `right`) safely via AST analysis without `eval()`.
-   - On `False`, selectively deactivates downstream subgraphs (`SKIPPED`) with transparent reasoning while independent parallel branches continue and the workflow succeeds as `COMPLETED`.
+> **Speaker Notes:**
+>
+> *"Let's take a quick look under the hood:*
+>
+> 1. * **Upfront Graph Validation:** Before a single task executes, we run **Kahn's Algorithm** to guarantee the graph is a valid DAG with zero circular dependencies.*
+> 2. * **True Async Concurrency:** Ready nodes with in-degree zero launch concurrently via Python's `asyncio` engine. Heavy subprocesses are dispatched onto non-blocking worker threads via `asyncio.to_thread` to maintain event-loop responsiveness.*
+> 3. * **Granular 5-State Lifecycle:** Every node transitions cleanly through `PENDING`, `RUNNING`, `SUCCESS`, `FAILED`, and `SKIPPED`.*
+> 4. * **Inter-Step Context & AST Condition Evaluation:** Step outputs dynamically populate a global runtime context `${{ steps.ID.property }}`, which feed directly into our AST-based condition nodes without unsafe `eval()` calls.*
+>
+> *Let's now jump directly into the live visual dashboard to see it in action."*
 
 ---
 
-## 3. The Live Demo Scenario (Step-by-Step Walkthrough)
+## 3. Step-by-Step Live UI Walkthrough — *[1:15 - 2:30]*
 
-### Narrative: Automated IT Incident Triage & Remediation
-*An infrastructure incident occurs (e.g. worker node memory exhaustion). The workflow engine triggers a multi-stage pipeline:*
-1. **FetchLog (Shell):** Fetches the latest system crash error log.
-2. **IndepBranch (Shell):** Concurrently runs an independent cluster health check in parallel.
-3. **AiTriage (AI Node):** Ingests the raw log, analyzes root cause, and generates structured JSON diagnostics using Gemini 3.6 Flash.
-4. **NotifySlack (REST):** Reads the AI output dynamically (`${{ steps.AiTriage.response.severity }}`) and dispatches an alert payload to a webhook.
+*(Open browser at `http://127.0.0.1:8000/`)*
 
----
-
-### Step 1: Start the Workflow Engine & Open Visual Dashboard
-
-In your terminal:
-```bash
-uvicorn main:app --reload --port 8000
 ```
-- **Visual Graph Dashboard:** Navigate to `http://127.0.0.1:8000/` in your browser.
-  - Select *Preset 1: AI Triage + Condition + Remediation* or customize your DAG JSON in the editor.
-  - Click **Execute Workflow** to observe live parallel node coloring, status transitions, and real-time inspector feedback!
-- **OpenAPI Interactive Documentation:** `http://127.0.0.1:8000/docs`.
-
----
-
-### Step 2: Ingest the Incident Response Workflow
-
-Submit the JSON DAG payload:
-
-```bash
-curl -X POST http://127.0.0.1:8000/workflows \
-  -H "Content-Type: application/json" \
-  -d '{
-    "steps": [
-      {
-        "id": "FetchLog",
-        "type": "shell",
-        "config": {
-          "command": "echo Out of memory error in worker pool 3 on host worker-09"
-        }
-      },
-      {
-        "id": "AiTriage",
-        "type": "ai",
-        "config": {
-          "prompt": "Analyze this incident log: ${{ steps.FetchLog.stdout }}. Return JSON with keys: severity, root_cause, and recommended_action.",
-          "response_format": "json"
-        },
-        "depends_on": ["FetchLog"]
-      },
-      {
-        "id": "NotifySlack",
-        "type": "rest",
-        "config": {
-          "url": "https://httpbin.org/post",
-          "method": "POST",
-          "body": {
-            "alert_level": "${{ steps.AiTriage.response.severity }}",
-            "incident_cause": "${{ steps.AiTriage.response.root_cause }}",
-            "action_required": "${{ steps.AiTriage.response.recommended_action }}"
-          }
-        },
-        "depends_on": ["AiTriage"]
-      },
-      {
-        "id": "IndepBranch",
-        "type": "shell",
-        "config": {
-          "command": "echo Health check: Database and Storage clusters are HEALTHY"
-        }
-      }
-    ]
-  }'
-```
-
-#### What the Judges See (Instant Response):
-```json
-{
-  "workflow_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3d001a",
-  "status": "PENDING",
-  "message": "Workflow accepted for background execution"
-}
-```
-*Talking point: Notice the `HTTP 202 Accepted` response within single-digit milliseconds. The client is never blocked.*
-
----
-
-### Step 3: Poll Workflow Execution & Inspect Context
-
-Query the workflow status using the returned ID:
-
-```bash
-curl -X GET http://127.0.0.1:8000/workflows/<WORKFLOW_ID>
-```
-
-#### What the Judges See (Completed Output):
-```json
-{
-  "workflow_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3d001a",
-  "status": "COMPLETED",
-  "success": true,
-  "results": {
-    "FetchLog": {
-      "id": "FetchLog",
-      "type": "shell",
-      "status": "SUCCESS",
-      "success": true,
-      "stdout": "Out of memory error in worker pool 3 on host worker-09",
-      "stderr": "",
-      "exit_code": 0
-    },
-    "IndepBranch": {
-      "id": "IndepBranch",
-      "type": "shell",
-      "status": "SUCCESS",
-      "success": true,
-      "stdout": "Health check: Database and Storage clusters are HEALTHY",
-      "stderr": "",
-      "exit_code": 0
-    },
-    "AiTriage": {
-      "id": "AiTriage",
-      "type": "ai",
-      "status": "SUCCESS",
-      "success": true,
-      "response": {
-        "severity": "HIGH",
-        "root_cause": "OOM (Out Of Memory) event on worker pool 3",
-        "recommended_action": "Restart worker pool 3 and increase memory allocation limit"
-      }
-    },
-    "NotifySlack": {
-      "id": "NotifySlack",
-      "type": "rest",
-      "status": "SUCCESS",
-      "success": true,
-      "status_code": 200,
-      "response": {
-        "json": {
-          "alert_level": "HIGH",
-          "incident_cause": "OOM (Out Of Memory) event on worker pool 3",
-          "action_required": "Restart worker pool 3 and increase memory allocation limit"
-        }
-      }
-    }
-  },
-  "context": {
-    "steps": { ... }
-  }
-}
++-----------------------------------------------------------------------------------------------+
+|  DAG Orchestrator  |  Workflow Execution Engine  [Nutanix Hackathon]             Status: IDLE |
++-------------------------------+-----------------------------------+---------------------------+
+| PRESET SELECTOR & JSON EDITOR | INTERACTIVE LIVE DAG CANVAS       | NODE INSPECTOR & CONTEXT  |
+|                               |                                   |                           |
+| Preset 1: AI Incident Triage  |  [FetchCrashLog]                  | Node: AiTriage            |
+|                               |         |                         | Type: AI (Gemini Flash)   |
+| [⚡ Execute Workflow]         |         v                         | Status: SUCCESS           |
+|                               |    [AiTriage]                     | Response: {               |
+|                               |         |                         |   "severity": "CRITICAL", |
+|                               |         v                         |   "requires_restart": true|
+|                               |  [CheckCondition]                 | }                         |
+|                               |    /         \                    |                           |
+|                               | (True)     (False)                | Live stdout / stderr      |
+|                               |   v           v                   | Runtime metrics           |
+|                               |[Remediate] [SkippedAction]        |                           |
++-------------------------------+-----------------------------------+---------------------------+
 ```
 
 ---
 
-## 4. Key Talking Points for the Judges
+### Demo 1: Autonomous AI Incident Triage & Remediation *(Preset 1)*
+* **Action:** Select **"Preset 1: AI Triage + Condition + Remediation"** in the dropdown.
+* **Click:** **[⚡ Execute Workflow]**
+* **What Judges See:**
+  1. Graph immediately renders on canvas in **Blue (`PENDING`)**.
+  2. `FetchCrashLog` and `IndependentTelemetry` immediately turn **Amber (`RUNNING`) in parallel**.
+  3. `FetchCrashLog` completes **Green (`SUCCESS`)** and feeds its crash log (`"Out of memory error in worker pool 3"`) into `AiTriage`.
+  4. `AiTriage` invokes Gemini 3.6 Flash asynchronously, extracting structured JSON (`{"severity": "CRITICAL", "requires_restart": true, "action": "Restart worker pool 3"}`).
+  5. `CheckRestartCondition` evaluates `${{ steps.AiTriage.response.requires_restart }} == true` via AST, evaluating to `True`.
+  6. `RemediationAction` executes the remediation command and `NotifySlack` posts the alert to a webhook.
+* **Speaker Highlight:**
+  > *"Notice how the AI node seamlessly extracted root cause diagnostics in raw JSON, dynamic context substitution routed the decision to our condition node, and the engine remediated the crash autonomously in under 2 seconds."*
 
-| Evaluation Dimension | How We Win |
+---
+
+### Demo 2: High-Speed JQ Data Reshaping & Auto-Scaling *(Preset 2)*
+* **Action:** Select **"Preset 2: JQ Metrics Filter + Auto-Scale"** in the dropdown.
+* **Click:** **[⚡ Execute Workflow]**
+* **What Judges See:**
+  1. `CollectClusterMetrics` dumps raw multi-node cluster CPU metrics.
+  2. `FilterOverloadedNodes` (JQ Node) applies `[.nodes[] | select(.cpu >= 85)]` entirely in-memory without spawning external scripts.
+  3. `ReshapeAlertData` aggregates the results into a clean dictionary `{high_load_count: 2, target_nodes: ["worker-1", "worker-3"]}`.
+  4. `CheckCriticalThreshold` validates `high_load_count > 0` $\to$ triggers `TriggerAutoScale` for the exact target nodes.
+* **Speaker Highlight:**
+  > *"Instead of writing custom Python glue scripts, workflows can filter, slice, and reshape high-volume infrastructure metrics in-memory using native JQ transformations."*
+
+---
+
+### Demo 3: Granular Failure Isolation & Independent Branching *(Preset 3)*
+* **Action:** Select **"Preset 3: Failure Isolation & Independent Branch"** in the dropdown.
+* **Click:** **[⚡ Execute Workflow]**
+* **What Judges See:**
+  1. `FailDatabaseSync` exits with code `1` and turns **Red (`FAILED`)**.
+  2. `SkippedDownstreamTask` and `SkippedNotification` turn **Slate (`SKIPPED`)** with dashed borders.
+  3. Clicking `SkippedDownstreamTask` in the Inspector reveals the exact reason: `"Skipped due to failure in upstream step 'FailDatabaseSync'"`.
+  4. **Crucial:** `IndependentTelemetryA` and `IndependentTelemetryB` continue executing concurrently to **Green (`SUCCESS`)**.
+* **Speaker Highlight:**
+  > *"In a monolithic script, one failure crashes the entire run. In our engine, failures are strictly isolated: broken dependency subgraphs are cleanly skipped, while independent operational branches run to full completion."*
+
+---
+
+## 4. Judge Evaluation Mapping & Wrap-Up — *[2:30 - 3:00]*
+
+| Hackathon Criteria | How Our Engine Delivers |
 | :--- | :--- |
-| **1. Innovation** | **Agentic Intelligence in the Graph:** We didn't just build a dumb task-runner. With the native **Gemini 3.6 Flash AI Node**, workflows can parse unstructured text, make autonomous reasoning decisions, and pass structured JSON decisions directly into downstream HTTP/Shell remediation nodes. |
-| **2. Completeness & Robustness** | **True Asynchronous Architecture:** Full non-blocking pipeline from API ingress (`HTTP 202` background worker) to runtime graph execution (`asyncio.create_task` concurrency, `asyncio.to_thread` subprocess isolation). Cycle detection via Kahn's algorithm guarantees graph integrity. |
-| **3. Granular Fault Tolerance** | **Surgical Failure Containment:** When a node fails, only its downstream dependent subgraph transitions to `SKIPPED`. Parallel independent branches remain unaffected and execute to full `SUCCESS`. |
-| **4. Extensibility & Design** | **Zero-Core-Modification Plugins:** Adding database connectors, Slack alerts, or Kubernetes operators requires simply declaring `@register_step_type("custom")` without modifying any engine internals. |
+| 🚀 **Innovation** | Native integration of **Gemini 3.6 Flash** for agentic reasoning + safe **AST-based conditional execution** without unsafe `eval()`. |
+| 🧩 **Completeness** | Full async DAG scheduling, Kahn's validation, non-blocking background ingestion (`202 Accepted`), context data passing, REST API, and interactive visual dashboard. |
+| 💼 **Practical Impact** | Solves real-world Day-2 cloud infrastructure operations by transforming static runbooks into self-healing, intelligent automation pipelines. |
+| 🛡️ **Code Quality & Reliability** | Thread-safe subprocess execution (`asyncio.to_thread`), comprehensive error fallbacks, 100% automated test suite passing across all 15 unit and API scenarios. |
+
+> **Closing Statement:**
+>
+> *"Our Workflow Execution Engine brings true parallelism, failure resilience, and AI intelligence to modern infrastructure operations. Thank you, and we're ready for your questions!"*
+
+---
+
+## 5. Potential Judge Q&A Cheatsheet
+
+### Q1: How do you prevent event loop blocking when running heavy shell commands or REST requests?
+> **Answer:** We offload synchronous subprocess execution to worker threads via `asyncio.to_thread(subprocess.run, ...)` and use `httpx.AsyncClient` for all HTTP and AI communications. The FastAPI event loop remains completely unblocked.
+
+### Q2: How do you ensure safety in the Condition Node? Could someone inject malicious Python code?
+> **Answer:** We do **not** use `eval()`. Instead, we parse the expression using Python's `ast` (Abstract Syntax Tree) module, strictly whitelisting constants, boolean operations (`and`, `or`, `not`), comparisons, and literals. Any function calls or unauthorized AST nodes are rejected immediately.
+
+### Q3: How does the engine scale for large DAGs?
+> **Answer:** Graph validation is $O(V + E)$ via Kahn's algorithm. Task scheduling is purely reactive using async task completions (`asyncio.FIRST_COMPLETED`), and FastAPI handles requests in background tasks returning immediate `202 Accepted` receipts.
