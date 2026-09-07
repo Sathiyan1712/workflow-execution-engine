@@ -301,6 +301,31 @@ def main():
     assert res_bad_jq["results"]["BadJqStep"]["status"] == StepStatus.FAILED
     assert "JQ transformation error" in res_bad_jq["results"]["BadJqStep"]["error"]
 
+    # 10b. JQ Handling Quoted Shell JSON String Output
+    quoted_jq_pipeline = [
+        {
+            "id": "ShellQuotedJSON",
+            "type": "shell",
+            "config": {
+                "command": "echo '{\"nodes\": [{\"id\": \"worker-1\", \"cpu\": 92}, {\"id\": \"worker-2\", \"cpu\": 45}]}'"
+            }
+        },
+        {
+            "id": "FilterNodes",
+            "type": "jq",
+            "config": {
+                "query": "[.nodes[] | select(.cpu > 80) | .id]",
+                "data": "${{ steps.ShellQuotedJSON.stdout }}"
+            },
+            "depends_on": ["ShellQuotedJSON"]
+        }
+    ]
+    res_quoted_jq = show("JQ Single-Quoted Raw JSON Shell Parsing", quoted_jq_pipeline)
+    assert res_quoted_jq["status"] == WorkflowStatus.COMPLETED
+    assert res_quoted_jq["results"]["FilterNodes"]["status"] == StepStatus.SUCCESS
+    assert res_quoted_jq["results"]["FilterNodes"]["response"] == ["worker-1"]
+
+
     # 11. Condition Node: True Evaluation & Downstream Execution
     condition_true_pipeline = [
         {

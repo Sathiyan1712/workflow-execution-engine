@@ -5,13 +5,14 @@ from pathlib import Path
 from typing import List, Optional, Any, Dict
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
 load_dotenv()
 
 from engine import run_workflow, validate_dag, StepStatus, WorkflowStatus
+from pptx_generator import generate_presentation_bytes
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
@@ -37,6 +38,22 @@ async def serve_presentation():
     if pres_path.exists():
         return HTMLResponse(content=pres_path.read_text(encoding="utf-8"))
     return HTMLResponse(content="<h1>Presentation file not found</h1>", status_code=404)
+
+
+@app.get("/presentation/download")
+async def download_presentation():
+    try:
+        pptx_bytes = generate_presentation_bytes()
+        return Response(
+            content=pptx_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            headers={
+                "Content-Disposition": 'attachment; filename="Workflow_Engine_Nutanix_PS4.pptx"'
+            }
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate presentation: {str(e)}")
+
 
 
 

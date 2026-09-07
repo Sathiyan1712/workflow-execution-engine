@@ -356,14 +356,46 @@ async def handle_jq(step: dict) -> dict:
     # If data is a JSON string, attempt to parse it to a Python object
     data = raw_data
     if isinstance(data, str):
+        cleaned = data.strip()
         try:
-            data = json.loads(data)
+            data = json.loads(cleaned)
         except Exception:
-            pass
+            # Handle shell output with surrounding single/double quotes (common on Windows)
+            if (cleaned.startswith("'") and cleaned.endswith("'")) or (cleaned.startswith('"') and cleaned.endswith('"')):
+                try:
+                    data = json.loads(cleaned[1:-1].strip())
+                except Exception:
+                    pass
 
     def _run_jq(q: str, d: Any):
         compiled = jq.compile(q)
-        results = compiled.input_value(d).all()
+
+        # If d is a dict, list, primitive, or None, use input_value
+        if isinstance(d, (dict, list, int, float, bool)) or d is None:
+            results = compiled.input_value(d).all()
+        elif isinstance(d, str):
+            # Attempt JSON parsing if d is still a string
+            cleaned_str = d.strip()
+            parsed_obj = None
+            try:
+                parsed_obj = json.loads(cleaned_str)
+            except Exception:
+                if (cleaned_str.startswith("'") and cleaned_str.endswith("'")) or (cleaned_str.startswith('"') and cleaned_str.endswith('"')):
+                    try:
+                        parsed_obj = json.loads(cleaned_str[1:-1].strip())
+                    except Exception:
+                        pass
+
+            if parsed_obj is not None:
+                results = compiled.input_value(parsed_obj).all()
+            else:
+                try:
+                    results = compiled.input_text(cleaned_str).all()
+                except Exception:
+                    results = compiled.input_value(d).all()
+        else:
+            results = compiled.input_value(d).all()
+
         if len(results) == 1:
             return results[0]
         elif len(results) == 0:

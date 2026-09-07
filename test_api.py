@@ -127,9 +127,19 @@ def test_api_presentation_endpoint():
     print("Presentation GET /presentation endpoint returned 200 OK with slide deck!")
 
 
+def test_api_presentation_download_endpoint():
+    res = client.get("/presentation/download")
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    assert 'attachment; filename="Workflow_Engine_Nutanix_PS4.pptx"' in res.headers["content-disposition"]
+    assert len(res.content) > 10000  # Valid PPTX binary content
+    print(f"Presentation Download GET /presentation/download returned 200 OK ({len(res.content)} bytes PPTX)!")
+
+
 if __name__ == "__main__":
     test_api_dashboard_endpoint()
     test_api_presentation_endpoint()
+    test_api_presentation_download_endpoint()
     test_api_context_passing()
     test_api_condition_routing()
 
