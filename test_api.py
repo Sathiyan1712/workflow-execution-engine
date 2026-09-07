@@ -111,6 +111,15 @@ def test_api_condition_routing():
     print("FastAPI Condition Branch Routing Passed!")
 
 
+def test_api_dashboard_endpoint():
+    res = client.get("/")
+    assert res.status_code == 200
+    assert "Workflow Execution Engine | Visual DAG Dashboard" in res.text
+    assert "vis-network" in res.text
+    print("Dashboard GET / endpoint returned 200 OK with UI HTML!")
+
+
 if __name__ == "__main__":
+    test_api_dashboard_endpoint()
     test_api_context_passing()
     test_api_condition_routing()

@@ -33,7 +33,9 @@ pip install -r requirements.txt
 uvicorn main:app --reload
 ```
 
-Then open `http://127.0.0.1:8000/docs` for the interactive API UI, or POST a workflow JSON to `http://127.0.0.1:8000/workflows`.
+- **Interactive Visual DAG Dashboard**: Open `http://127.0.0.1:8000/` in your browser to visually compose, execute, and monitor workflows in real time.
+- **API Documentation**: Open `http://127.0.0.1:8000/docs` for the interactive OpenAPI UI.
+- **REST Ingestion**: POST JSON workflows directly to `http://127.0.0.1:8000/workflows`.
 
 ## Example: AI and JQ Transformation Workflow
 

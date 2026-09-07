@@ -1,0 +1,950 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Workflow Execution Engine | Visual DAG Dashboard</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f0f9ff',
+              500: '#0284c7',
+              600: '#0369a1',
+              900: '#0c4a6e',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <!-- vis-network CDN -->
+  <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    /* Custom scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0f172a;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #475569;
+    }
+    #network-canvas {
+      width: 100%;
+      height: 100%;
+      background: radial-gradient(circle at 50% 50%, #1e293b 0%, #0f172a 100%);
+    }
+    @keyframes pulseGlow {
+      0%, 100% { box-shadow: 0 0 15px rgba(245, 158, 11, 0.4); }
+      50% { box-shadow: 0 0 25px rgba(245, 158, 11, 0.8); }
+    }
+    .pulsing-running {
+      animation: pulseGlow 1.5s infinite;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans antialiased h-screen flex flex-col overflow-hidden">
+
+  <!-- Header -->
+  <header class="bg-slate-900/90 backdrop-blur border-b border-slate-800 px-6 py-3.5 flex items-center justify-between shrink-0 shadow-lg z-20">
+    <div class="flex items-center space-x-4">
+      <div class="flex items-center space-x-2.5 bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border border-cyan-500/30 px-3 py-1.5 rounded-lg">
+        <i data-lucide="git-merge" class="w-5 h-5 text-cyan-400"></i>
+        <span class="font-bold tracking-wide text-white text-sm">DAG Orchestrator</span>
+      </div>
+      <div>
+        <h1 class="text-base font-semibold text-slate-100 flex items-center gap-2">
+          Workflow Execution Engine
+          <span class="text-xs font-normal text-cyan-400 bg-cyan-950/60 border border-cyan-800/60 px-2 py-0.5 rounded-full">Nutanix Hackathon</span>
+        </h1>
+        <p class="text-xs text-slate-400">Asynchronous Parallel DAG Scheduling &bull; AI Reasoning &bull; Dynamic Branching</p>
+      </div>
+    </div>
+
+    <!-- Status & Top Controls -->
+    <div class="flex items-center space-x-4">
+      <!-- Workflow Execution Badge -->
+      <div class="flex items-center space-x-2 bg-slate-950/80 border border-slate-800 px-3.5 py-1.5 rounded-lg shadow-inner">
+        <span class="text-xs text-slate-400 font-medium">Status:</span>
+        <span id="overall-status-badge" class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700">
+          <span class="w-1.5 h-1.5 rounded-full bg-slate-400 mr-1.5"></span>
+          IDLE
+        </span>
+      </div>
+
+      <div class="flex items-center space-x-2 text-xs">
+        <a href="/docs" target="_blank" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition">
+          <i data-lucide="file-code-2" class="w-3.5 h-3.5 text-slate-400"></i>
+          API Docs
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Grid -->
+  <main class="flex-1 grid grid-cols-12 gap-0 overflow-hidden">
+    
+    <!-- LEFT PANEL: Editor & Presets (3.5 cols) -->
+    <section class="col-span-12 lg:col-span-4 xl:col-span-3 bg-slate-900/70 border-r border-slate-800 flex flex-col h-full overflow-hidden">
+      <!-- Top Presets Bar -->
+      <div class="p-4 border-b border-slate-800 space-y-3 bg-slate-900/90">
+        <div class="flex items-center justify-between">
+          <label class="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+            <i data-lucide="layers" class="w-4 h-4 text-cyan-400"></i> Workflow Preset
+          </label>
+          <span class="text-[10px] text-slate-500">JSON DAG</span>
+        </div>
+        <select id="preset-selector" class="w-full bg-slate-950 border border-slate-700 text-slate-200 text-xs rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 transition">
+          <option value="preset_ai">Preset 1: AI Triage + Condition + Remediation</option>
+          <option value="preset_jq">Preset 2: JQ Metrics Filter + Auto-Scale</option>
+          <option value="preset_failure">Preset 3: Failure Isolation & Independent Branch</option>
+        </select>
+      </div>
+
+      <!-- JSON Editor Area -->
+      <div class="flex-1 p-4 flex flex-col overflow-hidden space-y-2">
+        <div class="flex items-center justify-between text-xs text-slate-400">
+          <span class="flex items-center gap-1"><i data-lucide="code" class="w-3.5 h-3.5"></i> Workflow Definition</span>
+          <button id="btn-format-json" class="hover:text-cyan-400 flex items-center gap-1 transition text-[11px]">
+            <i data-lucide="sparkles" class="w-3 h-3"></i> Format JSON
+          </button>
+        </div>
+        <textarea id="json-editor" spellcheck="false" class="flex-1 w-full bg-slate-950 text-emerald-400 font-mono text-[11.5px] leading-relaxed p-3.5 rounded-lg border border-slate-800 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 resize-none overflow-y-auto shadow-inner"></textarea>
+      </div>
+
+      <!-- Execute Actions Bar -->
+      <div class="p-4 border-t border-slate-800 bg-slate-900/90 space-y-2.5">
+        <button id="btn-execute" class="w-full py-2.5 px-4 rounded-lg bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-medium text-sm flex items-center justify-center gap-2 shadow-lg shadow-cyan-900/30 transition transform active:scale-[0.98]">
+          <i data-lucide="play" class="w-4 h-4 fill-white"></i>
+          <span>Execute Workflow</span>
+        </button>
+        <div class="flex items-center justify-between text-[11px] text-slate-400 px-1">
+          <span id="editor-node-count">Nodes: 0</span>
+          <span id="editor-dep-count">Edges: 0</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- CENTER PANEL: Interactive DAG Canvas (5.5 cols) -->
+    <section class="col-span-12 lg:col-span-5 xl:col-span-6 flex flex-col h-full bg-slate-950 relative overflow-hidden">
+      <!-- Canvas Control Overlay Bar -->
+      <div class="absolute top-4 left-4 z-10 flex items-center space-x-2 bg-slate-900/90 backdrop-blur border border-slate-800 px-3 py-1.5 rounded-xl shadow-xl">
+        <button id="btn-zoom-fit" title="Fit to Screen" class="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition">
+          <i data-lucide="maximize" class="w-4 h-4"></i>
+        </button>
+        <div class="h-4 w-px bg-slate-800"></div>
+        <button id="btn-zoom-in" title="Zoom In" class="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition">
+          <i data-lucide="zoom-in" class="w-4 h-4"></i>
+        </button>
+        <button id="btn-zoom-out" title="Zoom Out" class="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition">
+          <i data-lucide="zoom-out" class="w-4 h-4"></i>
+        </button>
+        <div class="h-4 w-px bg-slate-800"></div>
+        <button id="btn-layout-toggle" title="Toggle Layout Direction" class="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition flex items-center gap-1 text-xs">
+          <i data-lucide="move-right" class="w-4 h-4"></i>
+          <span id="layout-label">LR</span>
+        </button>
+      </div>
+
+      <!-- Live Execution Indicator Ribbon -->
+      <div id="execution-ribbon" class="hidden absolute top-4 right-4 z-10 items-center space-x-2 bg-cyan-950/80 border border-cyan-800/80 text-cyan-300 text-xs px-3 py-1.5 rounded-xl shadow-xl animate-pulse">
+        <i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i>
+        <span id="ribbon-text">Executing DAG...</span>
+      </div>
+
+      <!-- Graph Canvas Container -->
+      <div id="network-canvas" class="flex-1"></div>
+
+      <!-- Bottom Status Legend -->
+      <div class="p-3 border-t border-slate-800 bg-slate-900/80 backdrop-blur flex items-center justify-around text-xs text-slate-300">
+        <div class="flex items-center gap-1.5">
+          <span class="w-2.5 h-2.5 rounded-full bg-blue-500 ring-2 ring-blue-500/20"></span>
+          <span>Pending</span>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <span class="w-2.5 h-2.5 rounded-full bg-amber-500 ring-2 ring-amber-500/20 animate-ping"></span>
+          <span>Running</span>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-emerald-500/20"></span>
+          <span>Success</span>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <span class="w-2.5 h-2.5 rounded-full bg-rose-500 ring-2 ring-rose-500/20"></span>
+          <span>Failed</span>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <span class="w-2.5 h-2.5 rounded-full bg-slate-500 ring-2 ring-slate-500/20"></span>
+          <span>Skipped</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- RIGHT PANEL: Live Inspector & Context (3 cols) -->
+    <section class="col-span-12 lg:col-span-3 xl:col-span-3 bg-slate-900/70 border-l border-slate-800 flex flex-col h-full overflow-hidden">
+      <!-- Tabs Header -->
+      <div class="flex border-b border-slate-800 bg-slate-900/90 text-xs">
+        <button id="tab-btn-inspector" class="flex-1 py-3 px-4 text-center font-medium border-b-2 border-cyan-500 text-cyan-400 flex items-center justify-center gap-1.5 transition">
+          <i data-lucide="scan" class="w-3.5 h-3.5"></i> Node Inspector
+        </button>
+        <button id="tab-btn-context" class="flex-1 py-3 px-4 text-center font-medium border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center justify-center gap-1.5 transition">
+          <i data-lucide="database" class="w-3.5 h-3.5"></i> Global Context
+        </button>
+      </div>
+
+      <!-- Tab Content Area -->
+      <div class="flex-1 overflow-y-auto p-4 space-y-4">
+        
+        <!-- Inspector View -->
+        <div id="inspector-view" class="space-y-4">
+          <div id="inspector-empty" class="text-center py-16 text-slate-500 text-xs space-y-2">
+            <i data-lucide="mouse-pointer-click" class="w-8 h-8 mx-auto stroke-slate-600"></i>
+            <p>Click any node in the graph to inspect its runtime outputs and configuration.</p>
+          </div>
+
+          <div id="inspector-details" class="hidden space-y-3.5">
+            <!-- Node Header Card -->
+            <div class="bg-slate-950 border border-slate-800 p-3.5 rounded-lg space-y-2">
+              <div class="flex items-center justify-between">
+                <span id="inspect-node-id" class="font-bold text-sm text-white">NodeID</span>
+                <span id="inspect-node-status" class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-slate-800 text-slate-300">PENDING</span>
+              </div>
+              <div class="flex items-center gap-2 text-xs text-slate-400">
+                <span>Type: <span id="inspect-node-type" class="text-cyan-400 font-mono font-medium">shell</span></span>
+                <span>&bull;</span>
+                <span id="inspect-node-deps">Deps: None</span>
+              </div>
+            </div>
+
+            <!-- Error Callout if any -->
+            <div id="inspect-error-container" class="hidden bg-rose-950/40 border border-rose-800/80 p-3 rounded-lg space-y-1">
+              <div class="flex items-center gap-1.5 text-xs font-semibold text-rose-400">
+                <i data-lucide="alert-triangle" class="w-3.5 h-3.5"></i> Error / Skip Reason
+              </div>
+              <p id="inspect-error-text" class="text-xs text-rose-300 font-mono break-all"></p>
+            </div>
+
+            <!-- Output Details -->
+            <div class="space-y-1.5">
+              <label class="text-xs font-semibold text-slate-400 flex items-center justify-between">
+                <span>Runtime Output</span>
+                <span class="text-[10px] text-slate-500 font-normal">Live Result</span>
+              </label>
+              <pre id="inspect-output-json" class="bg-slate-950 border border-slate-800 text-slate-200 font-mono text-[11px] p-3 rounded-lg overflow-x-auto max-h-64 whitespace-pre-wrap shadow-inner"></pre>
+            </div>
+
+            <!-- Step Config Definition -->
+            <div class="space-y-1.5">
+              <label class="text-xs font-semibold text-slate-400">Configuration</label>
+              <pre id="inspect-config-json" class="bg-slate-950 border border-slate-800 text-slate-400 font-mono text-[11px] p-3 rounded-lg overflow-x-auto max-h-48 whitespace-pre-wrap"></pre>
+            </div>
+          </div>
+        </div>
+
+        <!-- Global Context View -->
+        <div id="context-view" class="hidden space-y-2">
+          <div class="flex items-center justify-between text-xs text-slate-400">
+            <span>Inter-Step Context (${{ steps }})</span>
+            <span id="context-timestamp" class="text-[10px] text-slate-500">Live</span>
+          </div>
+          <pre id="global-context-json" class="bg-slate-950 border border-slate-800 text-cyan-300 font-mono text-[11px] p-3 rounded-lg overflow-x-auto max-h-[calc(100vh-230px)] whitespace-pre-wrap shadow-inner">{}</pre>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- JavaScript Logic -->
+  <script>
+    // --- Preset Workflows ---
+    const PRESETS = {
+      preset_ai: {
+        steps: [
+          {
+            id: "FetchCrashLog",
+            type: "shell",
+            config: {
+              command: "echo Out of memory error in worker pool 3 on host worker-09"
+            }
+          },
+          {
+            id: "IndependentTelemetry",
+            type: "shell",
+            config: {
+              command: "echo Cluster health check OK"
+            }
+          },
+          {
+            id: "AiTriage",
+            type: "ai",
+            config: {
+              prompt: "Analyze this incident log: '${{ steps.FetchCrashLog.stdout }}'. Determine if restart is required. Return JSON with keys 'severity', 'requires_restart' (boolean), and 'action'.",
+              response_format: "json"
+            },
+            depends_on: ["FetchCrashLog"]
+          },
+          {
+            id: "CheckRestartCondition",
+            type: "condition",
+            config: {
+              expression: "${{ steps.AiTriage.response.requires_restart }} == true"
+            },
+            depends_on: ["AiTriage"]
+          },
+          {
+            id: "RemediationAction",
+            type: "shell",
+            config: {
+              command: "echo Applying action: ${{ steps.AiTriage.response.action }}"
+            },
+            depends_on: ["CheckRestartCondition"]
+          },
+          {
+            id: "NotifySlack",
+            type: "rest",
+            config: {
+              url: "https://httpbin.org/post",
+              method: "POST",
+              body: {
+                incident: "Resolved",
+                severity: "${{ steps.AiTriage.response.severity }}"
+              }
+            },
+            depends_on: ["RemediationAction"]
+          }
+        ]
+      },
+      preset_jq: {
+        steps: [
+          {
+            id: "CollectClusterMetrics",
+            type: "shell",
+            config: {
+              command: "echo '{\"nodes\": [{\"id\": \"worker-1\", \"cpu\": 92, \"status\": \"critical\"}, {\"id\": \"worker-2\", \"cpu\": 45, \"status\": \"ok\"}, {\"id\": \"worker-3\", \"cpu\": 88, \"status\": \"warning\"}]}'"
+            }
+          },
+          {
+            id: "FilterOverloadedNodes",
+            type: "jq",
+            config: {
+              query: "[.nodes[] | select(.cpu >= 85)]",
+              data: "${{ steps.CollectClusterMetrics.stdout }}"
+            },
+            depends_on: ["CollectClusterMetrics"]
+          },
+          {
+            id: "ReshapeAlertData",
+            type: "jq",
+            config: {
+              query: "{high_load_count: length, target_nodes: [.[].id]}",
+              data: "${{ steps.FilterOverloadedNodes.response }}"
+            },
+            depends_on: ["FilterOverloadedNodes"]
+          },
+          {
+            id: "CheckCriticalThreshold",
+            type: "condition",
+            config: {
+              expression: "${{ steps.ReshapeAlertData.response.high_load_count }} > 0"
+            },
+            depends_on: ["ReshapeAlertData"]
+          },
+          {
+            id: "TriggerAutoScale",
+            type: "shell",
+            config: {
+              command: "echo Provisioning capacity for ${{ steps.ReshapeAlertData.response.high_load_count }} nodes: ${{ steps.ReshapeAlertData.response.target_nodes }}"
+            },
+            depends_on: ["CheckCriticalThreshold"]
+          }
+        ]
+      },
+      preset_failure: {
+        steps: [
+          {
+            id: "GenerateAuthToken",
+            type: "shell",
+            config: {
+              command: "echo token_auth_999"
+            }
+          },
+          {
+            id: "FailDatabaseSync",
+            type: "shell",
+            config: {
+              command: "exit /b 1"
+            },
+            depends_on: ["GenerateAuthToken"]
+          },
+          {
+            id: "SkippedDownstreamTask",
+            type: "shell",
+            config: {
+              command: "echo Performing database backup"
+            },
+            depends_on: ["FailDatabaseSync"]
+          },
+          {
+            id: "SkippedNotification",
+            type: "shell",
+            config: {
+              command: "echo Database backup completed"
+            },
+            depends_on: ["SkippedDownstreamTask"]
+          },
+          {
+            id: "IndependentTelemetryA",
+            type: "shell",
+            config: {
+              command: "echo Telemetry logging service running"
+            }
+          },
+          {
+            id: "IndependentTelemetryB",
+            type: "shell",
+            config: {
+              command: "echo Telemetry processed: ${{ steps.IndependentTelemetryA.stdout }}"
+            },
+            depends_on: ["IndependentTelemetryA"]
+          }
+        ]
+      }
+    };
+
+    // --- State Variables ---
+    let network = null;
+    let nodesDataSet = null;
+    let edgesDataSet = null;
+    let currentWorkflowId = null;
+    let pollTimer = null;
+    let currentLayoutDir = 'LR';
+    let selectedNodeId = null;
+    let lastPollResults = {};
+    let lastWorkflowState = null;
+
+    // --- DOM Elements ---
+    const jsonEditor = document.getElementById("json-editor");
+    const presetSelector = document.getElementById("preset-selector");
+    const btnExecute = document.getElementById("btn-execute");
+    const btnFormatJson = document.getElementById("btn-format-json");
+    const overallBadge = document.getElementById("overall-status-badge");
+    const executionRibbon = document.getElementById("execution-ribbon");
+    const ribbonText = document.getElementById("ribbon-text");
+    const nodeCountLabel = document.getElementById("editor-node-count");
+    const depCountLabel = document.getElementById("editor-dep-count");
+
+    // Inspector elements
+    const inspectorEmpty = document.getElementById("inspector-empty");
+    const inspectorDetails = document.getElementById("inspector-details");
+    const inspectNodeId = document.getElementById("inspect-node-id");
+    const inspectNodeType = document.getElementById("inspect-node-type");
+    const inspectNodeStatus = document.getElementById("inspect-node-status");
+    const inspectNodeDeps = document.getElementById("inspect-node-deps");
+    const inspectErrorContainer = document.getElementById("inspect-error-container");
+    const inspectErrorText = document.getElementById("inspect-error-text");
+    const inspectOutputJson = document.getElementById("inspect-output-json");
+    const inspectConfigJson = document.getElementById("inspect-config-json");
+    const globalContextJson = document.getElementById("global-context-json");
+
+    // --- Status Color Palette ---
+    const STATUS_THEMES = {
+      PENDING: {
+        background: '#1e293b',
+        border: '#3b82f6',
+        color: '#93c5fd',
+        highlightBg: '#1e3a8a',
+        highlightBorder: '#60a5fa',
+        badgeBg: 'bg-blue-950',
+        badgeText: 'text-blue-300',
+        badgeBorder: 'border-blue-800'
+      },
+      RUNNING: {
+        background: '#451a03',
+        border: '#f59e0b',
+        color: '#fef08a',
+        highlightBg: '#78350f',
+        highlightBorder: '#fbbf24',
+        badgeBg: 'bg-amber-950',
+        badgeText: 'text-amber-300',
+        badgeBorder: 'border-amber-800'
+      },
+      SUCCESS: {
+        background: '#064e3b',
+        border: '#10b981',
+        color: '#a7f3d0',
+        highlightBg: '#065f46',
+        highlightBorder: '#34d399',
+        badgeBg: 'bg-emerald-950',
+        badgeText: 'text-emerald-300',
+        badgeBorder: 'border-emerald-800'
+      },
+      FAILED: {
+        background: '#450a0a',
+        border: '#ef4444',
+        color: '#fca5a5',
+        highlightBg: '#7f1d1d',
+        highlightBorder: '#f87171',
+        badgeBg: 'bg-rose-950',
+        badgeText: 'text-rose-300',
+        badgeBorder: 'border-rose-800'
+      },
+      SKIPPED: {
+        background: '#1e293b',
+        border: '#64748b',
+        color: '#94a3b8',
+        highlightBg: '#334155',
+        highlightBorder: '#94a3b8',
+        badgeBg: 'bg-slate-800',
+        badgeText: 'text-slate-400',
+        badgeBorder: 'border-slate-700'
+      }
+    };
+
+    // --- Step Icons ---
+    const STEP_ICONS = {
+      shell: '🐚',
+      rest: '🌐',
+      ai: '🧠',
+      jq: '🔍',
+      condition: '🔀'
+    };
+
+    // --- Initialize ---
+    function init() {
+      lucide.createIcons();
+      loadPreset("preset_ai");
+      initNetwork();
+      setupEventListeners();
+    }
+
+    function loadPreset(presetKey) {
+      if (PRESETS[presetKey]) {
+        jsonEditor.value = JSON.stringify(PRESETS[presetKey], null, 2);
+        updateEditorStats();
+        renderDAGFromEditor();
+      }
+    }
+
+    function updateEditorStats() {
+      try {
+        const parsed = JSON.parse(jsonEditor.value);
+        const steps = parsed.steps || [];
+        let edgeCount = 0;
+        steps.forEach(s => {
+          if (Array.isArray(s.depends_on)) edgeCount += s.depends_on.length;
+        });
+        nodeCountLabel.textContent = `Nodes: ${steps.length}`;
+        depCountLabel.textContent = `Edges: ${edgeCount}`;
+      } catch (e) {
+        nodeCountLabel.textContent = `Invalid JSON`;
+        depCountLabel.textContent = ``;
+      }
+    }
+
+    // --- Vis Network Initialization ---
+    function initNetwork() {
+      const container = document.getElementById("network-canvas");
+      nodesDataSet = new vis.DataSet([]);
+      edgesDataSet = new vis.DataSet([]);
+
+      const data = { nodes: nodesDataSet, edges: edgesDataSet };
+      const options = getNetworkOptions(currentLayoutDir);
+
+      network = new vis.Network(container, data, options);
+
+      network.on("click", function (params) {
+        if (params.nodes.length > 0) {
+          selectNode(params.nodes[0]);
+        }
+      });
+    }
+
+    function getNetworkOptions(direction) {
+      return {
+        layout: {
+          hierarchical: {
+            enabled: true,
+            direction: direction,
+            sortMethod: 'directed',
+            levelSeparation: 190,
+            nodeSpacing: 130,
+            treeSpacing: 160
+          }
+        },
+        physics: {
+          enabled: false
+        },
+        interaction: {
+          hover: true,
+          navigationButtons: false,
+          keyboard: false,
+          zoomView: true,
+          dragView: true
+        },
+        nodes: {
+          shape: 'box',
+          margin: 12,
+          borderWidth: 2,
+          shadow: {
+            enabled: true,
+            color: 'rgba(0,0,0,0.5)',
+            size: 8,
+            x: 2,
+            y: 2
+          },
+          font: {
+            color: '#cbd5e1',
+            face: 'ui-sans-serif, system-ui, -apple-system, sans-serif',
+            size: 12,
+            multi: 'html',
+            bold: {
+              color: '#ffffff',
+              size: 14,
+              face: 'ui-sans-serif, system-ui, -apple-system, sans-serif'
+            }
+          }
+        },
+        edges: {
+          arrows: {
+            to: { enabled: true, scaleFactor: 0.85 }
+          },
+          color: {
+            color: '#475569',
+            highlight: '#38bdf8',
+            hover: '#94a3b8'
+          },
+          width: 2,
+          smooth: {
+            type: 'cubicBezier',
+            forceDirection: direction === 'LR' ? 'horizontal' : 'vertical',
+            roundness: 0.4
+          }
+        }
+      };
+    }
+
+    // --- Render DAG Graph from JSON ---
+    function renderDAGFromEditor(initialStatus = "PENDING") {
+      try {
+        const parsed = JSON.parse(jsonEditor.value);
+        const steps = parsed.steps || [];
+
+        const newNodes = [];
+        const newEdges = [];
+
+        steps.forEach(step => {
+          const status = initialStatus;
+          const theme = STATUS_THEMES[status] || STATUS_THEMES.PENDING;
+          const icon = STEP_ICONS[step.type] || '⚡';
+
+          newNodes.push({
+            id: step.id,
+            label: `<b>${icon} ${step.id}</b>\n[${step.type.toUpperCase()}] • ${status}`,
+            shapeProperties: {
+              borderDashes: status === 'SKIPPED' ? [5, 5] : false
+            },
+            color: {
+              background: theme.background,
+              border: theme.border,
+              highlight: {
+                background: theme.highlightBg,
+                border: theme.highlightBorder
+              }
+            }
+          });
+
+          if (Array.isArray(step.depends_on)) {
+            step.depends_on.forEach(depId => {
+              newEdges.push({
+                id: `${depId}->${step.id}`,
+                from: depId,
+                to: step.id
+              });
+            });
+          }
+        });
+
+        nodesDataSet.clear();
+        edgesDataSet.clear();
+        nodesDataSet.add(newNodes);
+        edgesDataSet.add(newEdges);
+
+        network.setOptions(getNetworkOptions(currentLayoutDir));
+        setTimeout(() => network.fit({ animation: { duration: 400 } }), 50);
+
+      } catch (e) {
+        console.error("Failed to parse editor JSON for DAG render:", e);
+      }
+    }
+
+    // --- Execute Workflow Action ---
+    async function executeWorkflow() {
+      if (pollTimer) clearInterval(pollTimer);
+
+      let payload;
+      try {
+        payload = JSON.parse(jsonEditor.value);
+        if (!payload.steps || !Array.isArray(payload.steps)) {
+          alert("Workflow JSON must contain a 'steps' array.");
+          return;
+        }
+      } catch (err) {
+        alert("Invalid JSON format. Please format or check syntax.");
+        return;
+      }
+
+      // Update UI to running state
+      btnExecute.disabled = true;
+      btnExecute.classList.add("opacity-75", "cursor-not-allowed");
+      executionRibbon.classList.remove("hidden");
+      executionRibbon.classList.add("flex");
+      ribbonText.textContent = "Ingesting workflow...";
+
+      setOverallStatus("RUNNING");
+      renderDAGFromEditor("PENDING");
+
+      try {
+        const resp = await fetch("/workflows", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (!resp.ok) {
+          const errData = await resp.json();
+          throw new Error(errData.detail || "Workflow submission failed");
+        }
+
+        const data = await resp.json();
+        currentWorkflowId = data.workflow_id;
+        ribbonText.textContent = `Running ${currentWorkflowId.substring(0, 8)}...`;
+
+        // Start live polling loop (500ms)
+        startPolling(currentWorkflowId);
+
+      } catch (err) {
+        alert(`Error: ${err.message}`);
+        setOverallStatus("FAILED");
+        btnExecute.disabled = false;
+        btnExecute.classList.remove("opacity-75", "cursor-not-allowed");
+        executionRibbon.classList.add("hidden");
+      }
+    }
+
+    function startPolling(workflowId) {
+      pollTimer = setInterval(async () => {
+        try {
+          const resp = await fetch(`/workflows/${workflowId}`);
+          if (!resp.ok) return;
+
+          const data = await resp.json();
+          lastWorkflowState = data;
+          lastPollResults = data.results || {};
+
+          // Update overall status
+          setOverallStatus(data.status);
+
+          // Update individual nodes on the canvas
+          updateNetworkNodes(data.results);
+
+          // Update Global Context
+          if (data.context && data.context.steps) {
+            globalContextJson.textContent = JSON.stringify(data.context.steps, null, 2);
+          }
+
+          // If a node is currently selected in inspector, refresh its details
+          if (selectedNodeId && data.results[selectedNodeId]) {
+            refreshInspector(selectedNodeId);
+          }
+
+          // Termination check
+          if (data.status === "COMPLETED" || data.status === "FAILED") {
+            clearInterval(pollTimer);
+            pollTimer = null;
+            btnExecute.disabled = false;
+            btnExecute.classList.remove("opacity-75", "cursor-not-allowed");
+            executionRibbon.classList.add("hidden");
+          }
+        } catch (e) {
+          console.error("Polling error:", e);
+        }
+      }, 500);
+    }
+
+    function updateNetworkNodes(results) {
+      if (!results) return;
+
+      const updates = [];
+      for (const [stepId, stepRes] of Object.entries(results)) {
+        const node = nodesDataSet.get(stepId);
+        if (node) {
+          const status = stepRes.status || "PENDING";
+          const theme = STATUS_THEMES[status] || STATUS_THEMES.PENDING;
+          const type = stepRes.type || "shell";
+          const icon = STEP_ICONS[type] || '⚡';
+
+          updates.push({
+            id: stepId,
+            label: `<b>${icon} ${stepId}</b>\n[${type.toUpperCase()}] • ${status}`,
+            shapeProperties: {
+              borderDashes: status === 'SKIPPED' ? [5, 5] : false
+            },
+            color: {
+              background: theme.background,
+              border: theme.border,
+              highlight: {
+                background: theme.highlightBg,
+                border: theme.highlightBorder
+              }
+            }
+          });
+        }
+      }
+      nodesDataSet.update(updates);
+    }
+
+    function setOverallStatus(status) {
+      const theme = STATUS_THEMES[status] || STATUS_THEMES.PENDING;
+      overallBadge.className = `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${theme.badgeBg} ${theme.badgeText} border ${theme.badgeBorder}`;
+      
+      let dotClass = "bg-slate-400";
+      if (status === "RUNNING") dotClass = "bg-amber-400 animate-ping";
+      else if (status === "COMPLETED" || status === "SUCCESS") dotClass = "bg-emerald-400";
+      else if (status === "FAILED") dotClass = "bg-rose-400";
+
+      overallBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full ${dotClass} mr-1.5"></span> ${status}`;
+    }
+
+    // --- Inspector Interaction ---
+    function selectNode(nodeId) {
+      selectedNodeId = nodeId;
+      refreshInspector(nodeId);
+    }
+
+    function refreshInspector(nodeId) {
+      try {
+        const parsed = JSON.parse(jsonEditor.value);
+        const steps = parsed.steps || [];
+        const stepDef = steps.find(s => s.id === nodeId) || { id: nodeId, type: 'unknown' };
+        const stepRes = lastPollResults[nodeId] || { status: 'PENDING', type: stepDef.type };
+
+        inspectorEmpty.classList.add("hidden");
+        inspectorDetails.classList.remove("hidden");
+
+        inspectNodeId.textContent = nodeId;
+        inspectNodeType.textContent = stepDef.type;
+        
+        const status = stepRes.status || 'PENDING';
+        const theme = STATUS_THEMES[status] || STATUS_THEMES.PENDING;
+        inspectNodeStatus.textContent = status;
+        inspectNodeStatus.className = `px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${theme.badgeBg} ${theme.badgeText} border ${theme.badgeBorder}`;
+
+        inspectNodeDeps.textContent = `Deps: ${stepDef.depends_on && stepDef.depends_on.length ? stepDef.depends_on.join(", ") : "None"}`;
+
+        // Error / Skip Reason Callout
+        if (stepRes.error) {
+          inspectErrorContainer.classList.remove("hidden");
+          inspectErrorText.textContent = stepRes.error;
+        } else {
+          inspectErrorContainer.classList.add("hidden");
+        }
+
+        // Filter output for clean display
+        const cleanOutput = { ...stepRes };
+        delete cleanOutput.id;
+        delete cleanOutput.type;
+        delete cleanOutput.status;
+
+        inspectOutputJson.textContent = Object.keys(cleanOutput).length ? JSON.stringify(cleanOutput, null, 2) : "// Awaiting execution output...";
+        inspectConfigJson.textContent = JSON.stringify(stepDef.config || stepDef, null, 2);
+
+      } catch (e) {
+        console.error("Inspector refresh error:", e);
+      }
+    }
+
+    // --- Event Listeners ---
+    function setupEventListeners() {
+      // Presets
+      presetSelector.addEventListener("change", (e) => {
+        loadPreset(e.target.value);
+      });
+
+      // Editor input
+      jsonEditor.addEventListener("input", () => {
+        updateEditorStats();
+        renderDAGFromEditor();
+      });
+
+      // Format JSON
+      btnFormatJson.addEventListener("click", () => {
+        try {
+          const parsed = JSON.parse(jsonEditor.value);
+          jsonEditor.value = JSON.stringify(parsed, null, 2);
+        } catch (e) {
+          alert("Invalid JSON syntax.");
+        }
+      });
+
+      // Execute button
+      btnExecute.addEventListener("click", executeWorkflow);
+
+      // Canvas Toolbar
+      document.getElementById("btn-zoom-fit").addEventListener("click", () => {
+        network.fit({ animation: { duration: 400 } });
+      });
+      document.getElementById("btn-zoom-in").addEventListener("click", () => {
+        const scale = network.getScale();
+        network.moveTo({ scale: scale * 1.3, animation: { duration: 250 } });
+      });
+      document.getElementById("btn-zoom-out").addEventListener("click", () => {
+        const scale = network.getScale();
+        network.moveTo({ scale: scale * 0.7, animation: { duration: 250 } });
+      });
+      document.getElementById("btn-layout-toggle").addEventListener("click", () => {
+        currentLayoutDir = currentLayoutDir === 'LR' ? 'UD' : 'LR';
+        document.getElementById("layout-label").textContent = currentLayoutDir;
+        network.setOptions(getNetworkOptions(currentLayoutDir));
+      });
+
+      // Tabs
+      const tabInspector = document.getElementById("tab-btn-inspector");
+      const tabContext = document.getElementById("tab-btn-context");
+      const viewInspector = document.getElementById("inspector-view");
+      const viewContext = document.getElementById("context-view");
+
+      tabInspector.addEventListener("click", () => {
+        tabInspector.className = "flex-1 py-3 px-4 text-center font-medium border-b-2 border-cyan-500 text-cyan-400 flex items-center justify-center gap-1.5 transition";
+        tabContext.className = "flex-1 py-3 px-4 text-center font-medium border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center justify-center gap-1.5 transition";
+        viewInspector.classList.remove("hidden");
+        viewContext.classList.add("hidden");
+      });
+
+      tabContext.addEventListener("click", () => {
+        tabContext.className = "flex-1 py-3 px-4 text-center font-medium border-b-2 border-cyan-500 text-cyan-400 flex items-center justify-center gap-1.5 transition";
+        tabInspector.className = "flex-1 py-3 px-4 text-center font-medium border-b-2 border-transparent text-slate-400 hover:text-slate-200 flex items-center justify-center gap-1.5 transition";
+        viewContext.classList.remove("hidden");
+        viewInspector.classList.add("hidden");
+      });
+    }
+
+    // Run on load
+    window.addEventListener("DOMContentLoaded", init);
+  </script>
+</body>
+</html>

@@ -74,13 +74,16 @@ flowchart TD
 
 ---
 
-### Step 1: Start the Workflow Engine API
+### Step 1: Start the Workflow Engine & Open Visual Dashboard
 
 In your terminal:
 ```bash
 uvicorn main:app --reload --port 8000
 ```
-*Expected: FastAPI launches with `WindowsProactorEventLoopPolicy` and OpenAPI UI at `http://127.0.0.1:8000/docs`.*
+- **Visual Graph Dashboard:** Navigate to `http://127.0.0.1:8000/` in your browser.
+  - Select *Preset 1: AI Triage + Condition + Remediation* or customize your DAG JSON in the editor.
+  - Click **Execute Workflow** to observe live parallel node coloring, status transitions, and real-time inspector feedback!
+- **OpenAPI Interactive Documentation:** `http://127.0.0.1:8000/docs`.
 
 ---
 

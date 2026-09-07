@@ -1,9 +1,11 @@
 import asyncio
 import sys
 import uuid
+from pathlib import Path
 from typing import List, Optional, Any, Dict
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, status
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -16,7 +18,18 @@ if sys.platform == "win32":
 
 app = FastAPI(title="Workflow Execution Engine")
 
+TEMPLATES_DIR = Path(__file__).parent / "templates"
+
 workflows_db: Dict[str, dict] = {}
+
+
+@app.get("/", response_class=HTMLResponse)
+async def serve_dashboard():
+    index_path = TEMPLATES_DIR / "index.html"
+    if index_path.exists():
+        return HTMLResponse(content=index_path.read_text(encoding="utf-8"))
+    return HTMLResponse(content="<h1>Dashboard file not found</h1>", status_code=404)
+
 
 
 class Step(BaseModel):
